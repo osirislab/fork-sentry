@@ -15,8 +15,8 @@ data "google_iam_policy" "noauth" {
 
 // Publicly exposed endpoint to GitHub Actions
 resource "google_cloud_run_service_iam_policy" "dispatcher_iam_member" {
-  service  = google_cloud_run_service.dispatcher.name
-  location = google_cloud_run_service.dispatcher.location
+  service     = google_cloud_run_service.dispatcher.name
+  location    = google_cloud_run_service.dispatcher.location
   policy_data = data.google_iam_policy.noauth.policy_data
 }
 

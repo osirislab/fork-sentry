@@ -26,7 +26,7 @@ resource "google_cloud_run_service" "dispatcher" {
           value = google_pubsub_topic.fork_analysis_ingestion.name
         }
         env {
-          name = "ROOT_API_TOKEN"
+          name  = "ROOT_API_TOKEN"
           value = var.root_api_token
         }
       }
