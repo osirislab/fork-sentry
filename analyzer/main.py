@@ -42,8 +42,9 @@ def handler():
     payload = json.loads(payload)
 
     repo = payload["Repo"]
+    token = payload["Token"]
     try:
-        analysis = RepoAnalysis(repo)
+        analysis = RepoAnalysis(repo, token)
         analysis.run()
     except Exception as err:
         # log to sentry

@@ -8,14 +8,10 @@ import typing as t
 
 import git
 import lief
-import requests
-import github
 from github import Github
 
 from google.cloud import pubsub_v1
 from google.cloud import logging as cloudlogging
-
-TEMP_WRK = "analysis"
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -33,8 +29,8 @@ class RepoAnalysis:
     Implements an interface for conducting fork integrity analysis across a single repository.
     """
 
-    def __init__(self, repo_name: str, token: str = None, vt_token: t.Optional[str] = None):
-        self.gh = Github()
+    def __init__(self, repo_name: str, token: str, vt_token: t.Optional[str] = None):
+        self.gh = Github(token)
         self.repo = self.gh.get_repo(repo_name)
         self.vt_token = vt_token
 
@@ -71,7 +67,7 @@ class RepoAnalysis:
 
         return False
 
-   def detect(self):
+    def detect(self):
         """
         Analyze an individual fork repository and detect suspicious artifacts and releases.
         """
@@ -117,7 +113,7 @@ class RepoAnalysis:
             head = fork_repo.head.commit
             for diff in head.diff(f"HEAD~{ahead}").iter_change_type("D"):
                 artifact = f"{path}/{diff.a_path}"
-                suspicious["artifacts"] += [diff.a_path]
+                suspicious["artifacts"] += [artifact]
 
         shutil.rmtree(path)
 

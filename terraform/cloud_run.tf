@@ -22,8 +22,12 @@ resource "google_cloud_run_service" "dispatcher" {
           value = var.project_name
         }
         env {
-          name  = "ALERT_TOPIC"
+          name  = "ANALYSIS_QUEUE"
           value = google_pubsub_topic.fork_analysis_ingestion.name
+        }
+        env {
+          name = "ROOT_API_TOKEN"
+          value = var.root_api_token
         }
       }
     }
@@ -62,7 +66,7 @@ resource "google_cloud_run_service" "analyzer" {
         }
         env {
           name  = "ALERT_TOPIC"
-          value = ""
+          value = google_pubsub_topic.fork_alert_output.name
         }
       }
     }

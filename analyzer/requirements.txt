@@ -1,5 +1,8 @@
 google-cloud-logging
 google-cloud-pubsub
+GitPython
+PyGithub
+lief
 Flask
 requests
 gunicorn
