@@ -1,0 +1,4 @@
+*.zip
+.env
+__pycache__/
+dispatcher

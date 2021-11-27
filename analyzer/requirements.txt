@@ -1,0 +1,6 @@
+google-cloud-logging
+google-cloud-pubsub
+Flask
+requests
+gunicorn
+sentry-sdk[flask]

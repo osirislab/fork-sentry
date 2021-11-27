@@ -1,0 +1,19 @@
+name: 'Fork Sentry'
+description: 'Detect and alert on suspicious forks of your repository'
+inputs:
+  github_token:
+    description: 'Required GitHub token to recover forks and artifact releases'
+    required: true
+  
+  fork_sentry_token:
+    description: 'API token needed to make authenticated requests with infrastructure'
+    required: true
+
+  infra_endpoint:
+    description: 'Endpoint to kick off fork integrity analysis.'
+    required: false
+    default: 'https://fork-dispatcher-nlztqjfqgq-uc.a.run.app'
+
+runs:
+  using: 'node12'
+  main: 'runner/index.js'
