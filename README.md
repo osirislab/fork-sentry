@@ -16,8 +16,6 @@ In the past, __Fork Sentry__ has already found and taken down instances of:
 
 ## Actions Usage
 
-### Cloud-Based
-
 ```yml
 name: Check for suspicious forks
 on:
@@ -30,13 +28,17 @@ jobs:
     steps:
       - uses: ex0dus-0x/fork-sentry@v1.0
         with:
+
+          # required for authentication and recovering forks
           github_token: ${{ secrets.GITHUB_TOKEN }}
           fork_sentry_token: ${{ secrets.FORK_SENTRY_API }}
+
+          # if self-hosting, replace with dispatcher endpoint
+          #infra_endpoint: https://fork-sentry-instance.example.com
 ```
 
-### Self-Hosting
-
-Given that Fork Sentry is entirely open-sourced, you may also choose to serve the
-infrastructure needed
-
 ## Implementation
+
+## License
+
+Fork Sentry is release under a Apache License 2.0 License
