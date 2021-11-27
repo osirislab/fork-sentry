@@ -14,6 +14,8 @@ inputs:
     required: false
     default: 'https://fork-dispatcher-nlztqjfqgq-uc.a.run.app'
 
+  # TODO: VT Enterprise
+
 runs:
   using: 'node12'
   main: 'runner/index.js'

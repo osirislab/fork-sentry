@@ -4,8 +4,12 @@ main.py
     Pulls repositories from Pubsub to do fork analysis. Recovers all forks, and enqueues 
     fresh alerts to output.
 """
+import os
 import json
 import base64
+from dotenv import load_dotenv
+load_dotenv()
+
 from flask import Flask, request
 
 import sentry_sdk
@@ -14,7 +18,7 @@ from sentry_sdk.integrations.flask import FlaskIntegration
 from repo_analysis import RepoAnalysis
 
 sentry_sdk.init(
-    dsn="https://e9893b7cebc74989b0b149fe693bafb0@o1034120.ingest.sentry.io/6000707",
+    dsn=os.getenv("SENTRY_DSN"),
     integrations=[FlaskIntegration()],
     traces_sample_rate=1.0,
 )

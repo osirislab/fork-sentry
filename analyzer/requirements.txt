@@ -4,3 +4,4 @@ Flask
 requests
 gunicorn
 sentry-sdk[flask]
+python-dotenv
