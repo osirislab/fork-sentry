@@ -1,3 +1,11 @@
+// Allow service account to instantiate authenticated tokens
+resource "google_project_iam_binding" "token_creator" {
+  role = "roles/iam.serviceAccountTokenCreator"
+  members = [
+    "serviceAccount:service-${google_project.project.number}@gcp-sa-pubsub.iam.gserviceaccount.com",
+  ]
+}
+
 /* ====================  Fork Dispatcher IAM Permissions ==================== */
 
 resource "google_service_account" "fork_dispatcher_sa" {
@@ -27,26 +35,29 @@ resource "google_service_account" "fork_analyzer_sa" {
 }
 
 // Allow invocation by pubsub to analyzer only
-resource "google_cloud_run_service_iam_member" "analyzer_iam_member" {
+resource "google_cloud_run_service_iam_member" "fork_analyzer_iam_member" {
   service  = google_cloud_run_service.analyzer.name
   location = google_cloud_run_service.analyzer.location
   role     = "roles/run.invoker"
   member   = "serviceAccount:${google_service_account.fork_analyzer_sa.email}"
 }
 
-// Allow service account to instantiate authenticated tokens
-resource "google_project_iam_binding" "project" {
-  role = "roles/iam.serviceAccountTokenCreator"
-  members = [
-    "serviceAccount:service-${google_project.project.number}@gcp-sa-pubsub.iam.gserviceaccount.com",
-  ]
-}
-
-/* ====================  Pub/Sub IAM Permissions ==================== */
-
 // Restrict publish access only to bot dispatcher
 resource "google_pubsub_topic_iam_binding" "fork_analysis_binding" {
   topic   = google_pubsub_topic.fork_analysis_ingestion.name
   role    = "roles/pubsub.publisher"
   members = ["serviceAccount:${google_service_account.service_account.email}"]
+}
+
+/* ====================  Alert Function IAM Permissions ==================== */
+
+resource "google_service_account" "fork_alert_sa" {
+  account_id = "fork-alert-sa"
+}
+
+// Allow invocation by pubsub to function by dispatcher only
+resource "google_cloudfunctions_function_iam_member" "fork_alert_iam_member" {
+  cloud_function = google_cloudfunctions_function.alert.name
+  role           = "roles/cloudfunctions.invoker"
+  member         = "serviceAccount:${google_service_account.fork_alert_sa.email}"
 }
