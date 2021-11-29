@@ -11,8 +11,8 @@ resource "google_cloud_run_service" "dispatcher" {
 
         resources {
           limits = {
-            cpu    = 2
-            memory = "1024M"
+            cpu    = 4
+            memory = "4000M"
           }
         }
 
@@ -67,6 +67,10 @@ resource "google_cloud_run_service" "analyzer" {
         env {
           name  = "ALERT_TOPIC"
           value = google_pubsub_topic.fork_alert_output.name
+        }
+        env {
+          name  = "SENTRY_DSN"
+          value = var.analyzer_sentry_dsn
         }
       }
     }

@@ -8,6 +8,7 @@ import os
 import json
 import base64
 from dotenv import load_dotenv
+
 load_dotenv()
 
 from flask import Flask, request
@@ -24,6 +25,7 @@ sentry_sdk.init(
 )
 
 app = Flask(__name__)
+
 
 @app.route("/", methods=["POST"])
 def handler():
@@ -43,9 +45,10 @@ def handler():
 
     repo = payload["Repo"]
     token = payload["Token"]
+    # tags = payload["Tags"]
     try:
         analysis = RepoAnalysis(repo, token)
-        analysis.run()
+        analysis.detect_suspicious()
     except Exception as err:
         # log to sentry
         pass

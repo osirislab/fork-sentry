@@ -25,7 +25,7 @@ resource "google_pubsub_subscription" "fork_analyzer_sub" {
 
     // service to service auth, as this is not deployed publicly
     oidc_token {
-      service_account_email = google_service_account.fork_dispatcher_sa.email
+      service_account_email = google_service_account.fork_analyzer_sa.email
     }
   }
 
@@ -46,4 +46,38 @@ resource "google_pubsub_subscription" "fork_analysis_dlq_sub" {
 
 resource "google_pubsub_topic" "fork_alert_output" {
   name = "fork_alert_output"
+}
+
+resource "google_pubsub_topic" "fork_output_dlq" {
+  name = "fork_output_dlq"
+}
+
+// Pushes an excavated fork to analyzer
+resource "google_pubsub_subscription" "fork_out_sub" {
+  name  = "fork_alert_output_sub"
+  topic = google_pubsub_topic.fork_alert_output.name
+
+  /* TODO
+  ack_deadline_seconds = 10
+
+  // Make push subscription to the CLoud Run listener endpoint
+  push_config {
+    push_endpoint = google_cloud_run_service.analyzer.status[0].url
+
+    attributes = {
+      x-goog-version = "v1"
+    }
+
+    // service to service auth, as this is not deployed publicly
+    oidc_token {
+      service_account_email = google_service_account.fork_analyzer_sa.email
+    }
+  }
+
+  // Drop failed requests in DLQ after 2 failed requests
+  dead_letter_policy {
+    dead_letter_topic     = google_pubsub_topic.fork_output_dlq.id
+    max_delivery_attempts = 5
+  }
+  */
 }

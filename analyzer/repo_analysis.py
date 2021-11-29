@@ -2,8 +2,11 @@
 repo_analysis.py
 """
 import os
+import json
 import logging
 import shutil
+import random
+import string
 import typing as t
 
 import git
@@ -18,11 +21,13 @@ logger.setLevel(logging.INFO)
 
 # setup publisher to output queue
 publisher = pubsub_v1.PublisherClient()
+topic = f"projects/{os.getenv('GOOGLE_PROJECT_ID')}/topics/{os.getenv('ALERT_TOPIC')}"
 
 # ensure logs can be seen by GCP
 _client = cloudlogging.Client()
 _handler = _client.get_default_handler()
 logger.addHandler(_handler)
+
 
 class RepoAnalysis:
     """
@@ -67,7 +72,7 @@ class RepoAnalysis:
 
         return False
 
-    def detect(self):
+    def detect_suspicious(self):
         """
         Analyze an individual fork repository and detect suspicious artifacts and releases.
         """
@@ -82,8 +87,11 @@ class RepoAnalysis:
         # detect if any of the changes are new artifacts we need to analyze
         logger.info("Checking for suspicious commits")
 
-        # clone repository to temporary path
-        path = self.repo.name
+        # clone repository to temporary path with random ID to prevent concurrent containers
+        # from cloning to the same spot
+        path = self.repo.name + "".join(
+            random.choice(string.ascii_uppercase + string.digits) for _ in range(6)
+        )
         if os.path.exists(path):
             shutil.rmtree(path)
 
@@ -132,4 +140,16 @@ class RepoAnalysis:
                 ]
                 logger.debug(f"{asset.name}: {asset.browser_download_url}")
 
-        return suspicious
+        self._generate_alerts(suspicious)
+
+    def _generate_alerts(self, results):
+        """
+        Helper to generate alerts to different sources if artifacts found are suspicious.
+        """
+        if len(results["artifacts"]) == 0 and len(results["releases"]) == 0:
+            logger.info(f"Nothing found for fork {self.repo_name}")
+            return
+
+        logger.info(f"Outputting detected changes to {self.repo_name}")
+        alerts = json.dumps(results, indent=2).encode("utf-8")
+        publisher.publish(topic, alerts)

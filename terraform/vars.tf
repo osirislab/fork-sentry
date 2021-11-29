@@ -19,6 +19,9 @@ variable "zone" {
 variable "root_api_token" {
 }
 
+variable "analyzer_sentry_dsn" {
+}
+
 variable "dispatcher_image" {
 }
 
