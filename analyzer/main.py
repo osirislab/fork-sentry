@@ -45,13 +45,13 @@ def handler():
 
     repo = payload["Repo"]
     token = payload["Token"]
-    # tags = payload["Tags"]
+    tags = payload["Tags"]
     try:
         analysis = RepoAnalysis(repo, token)
         analysis.detect_suspicious()
     except Exception as err:
-        # log to sentry
-        pass
+        print(f"Error for `{repo}`: {err}")
+        sentry_sdk.capture_exception(err)
 
     return ("", 204)
 

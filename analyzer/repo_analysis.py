@@ -1,6 +1,3 @@
-"""
-repo_analysis.py
-"""
 import os
 import json
 import logging
@@ -28,7 +25,6 @@ _client = cloudlogging.Client()
 _handler = _client.get_default_handler()
 logger.addHandler(_handler)
 
-
 class RepoAnalysis:
     """
     Implements an interface for conducting fork integrity analysis across a single repository.
@@ -44,33 +40,28 @@ class RepoAnalysis:
         self.repo_name = self.repo.full_name
         self.default_branch = self.repo.default_branch
 
-        self.results = {
-            "alerts": {},
-            "failed": {},
-        }
-
     @staticmethod
-    def push_suspicious(path) -> t.Optional[str]:
+    def is_suspicious(path) -> t.Optional[str]:
         """
         Heuristics to check if a modified file is suspicious and should be enqueued for further analysis.
         """
         # file is a binary executable/library
         if lief.is_elf(path) or lief.is_pe(path) or lief.is_macho(path):
-            return "artifact"
+            return "binary"
 
         # file is some compressed archive
         if path.endswith("zip") or path.endswith("tar.gz") or path.endswith("tgz"):
-            return "artifact"
+            return "archive"
 
         # file is build script
         if path.endswith(".sh") or "Makefile" in path:
-            return "artifact"
+            return "build-modified"
 
-        # CI/CD runner was modification
-        if ".github" in path:
-            return "action"
+        # CI/CD runner was modified
+        if ".github/workflows" in path:
+            return "ci-modified"
 
-        return False
+        return None
 
     def detect_suspicious(self):
         """
@@ -79,24 +70,23 @@ class RepoAnalysis:
 
         logger.debug(f"Analyzing {self.repo_name}")
         suspicious = {
-            "artifacts": [],
+            "artifacts": {},
             "releases": {},
         }
 
         # find commits by the fork owner and/or user known as a contributor, and
         # detect if any of the changes are new artifacts we need to analyze
-        logger.info("Checking for suspicious commits")
+        logger.info(f"{self.repo_name}: checking for suspicious commits")
 
         # clone repository to temporary path with random ID to prevent concurrent containers
         # from cloning to the same spot
-        path = self.repo.name + "".join(
+        path = self.repo.name + "-" + "".join(
             random.choice(string.ascii_uppercase + string.digits) for _ in range(6)
         )
         if os.path.exists(path):
             shutil.rmtree(path)
 
-        git.Git(path).clone(self.repo.clone_url)
-        fork_repo = git.Repo(path)
+        fork_repo = git.Repo.clone_from(self.repo.clone_url, path)
 
         # iterate over all branches, and find commits not by original contributors
 
@@ -121,12 +111,15 @@ class RepoAnalysis:
             head = fork_repo.head.commit
             for diff in head.diff(f"HEAD~{ahead}").iter_change_type("D"):
                 artifact = f"{path}/{diff.a_path}"
-                suspicious["artifacts"] += [artifact]
+                tag = RepoAnalysis.is_suspicious(artifact)
+                if not tag is None:
+                    #self._push_to_storage(artifact)
+                    suspicious["artifacts"][artifact] = tag
 
         shutil.rmtree(path)
 
         # check if fork has releases that are not released by the original author
-        logger.info("Checking for suspicious releases")
+        logger.info(f"{self.repo_name} - checking for suspicious releases")
         for release in self.repo.get_releases():
             tag = release.tag_name
 
@@ -141,6 +134,11 @@ class RepoAnalysis:
                 logger.debug(f"{asset.name}: {asset.browser_download_url}")
 
         self._generate_alerts(suspicious)
+
+    def _push_to_storage(self, path):
+        """
+        """
+        pass
 
     def _generate_alerts(self, results):
         """
