@@ -1,10 +1,21 @@
+# gcp
 google-cloud-logging
 google-cloud-pubsub
+google-cloud-storage
+
+# git interactions
 GitPython
 PyGithub
-lief
+
+# web
 Flask
 requests
 gunicorn
 sentry-sdk[flask]
 python-dotenv
+
+# analysis
+lief
+clamd
+#ssdeep
+vt-py

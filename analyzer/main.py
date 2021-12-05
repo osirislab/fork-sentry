@@ -47,7 +47,7 @@ def handler():
     token = payload["Token"]
     tags = payload["Tags"]
     try:
-        analysis = RepoAnalysis(repo, token)
+        analysis = RepoAnalysis(repo, token, tags)
         analysis.detect_suspicious()
     except Exception as err:
         print(f"Error for `{repo}`: {err}")
