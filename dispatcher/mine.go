@@ -20,6 +20,7 @@ import (
 type AnalyzerPayload struct {
 	Repo  string
 	Token string
+	Tags  []string
 }
 
 type ForkFinder struct {
@@ -145,6 +146,7 @@ func (f *ForkFinder) RecoverValidForks() error {
 			sendPayload := AnalyzerPayload{
 				Repo:  name,
 				Token: f.Inputs.Token,
+				Tags:  []string{},
 			}
 
 			payload, err := json.Marshal(sendPayload)
