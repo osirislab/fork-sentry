@@ -1,5 +1,10 @@
 name: 'Fork Sentry'
 description: 'Detect and alert on suspicious forks of your repository'
+
+branding:
+  icon: shield
+  color: blue
+
 inputs:
   github_token:
     description: 'Required GitHub token to recover forks and artifact releases'
