@@ -3,6 +3,7 @@ repo_analysis.py
 
     Implements interface to support fork integrity analysis.
 """
+import io
 import os
 import json
 import logging
@@ -18,6 +19,7 @@ import git
 import lief
 import clamd
 import vt
+import requests
 from github import Github
 
 from google.cloud import pubsub_v1, storage
@@ -52,27 +54,33 @@ class RepoAnalysis:
 
     def __init__(
         self,
+        parent_name: str,
         repo_name: str,
         token: str,
         tags: t.List[str],
         vt_token: t.Optional[str] = None,
     ):
         self.gh = Github(token)
+
+        # fork attributes
         self.token = token
         self.repo = self.gh.get_repo(repo_name)
         self.uuid = "".join(
             random.choice(string.ascii_uppercase + string.digits) for _ in range(6)
         )
+        self.fork_owner = self.repo.owner.login
+        self.repo_name = self.repo.full_name
+        self.branch = self.repo.default_branch
+
+        # parent repo attributes
+        self.parent = self.gh.get_repo(parent_name)
+        self.orig_name = self.parent.full_name
+        self.parent_branch = self.parent.default_branch
 
         # VT client
         self.vt_client = None
         if vt_token:
             self.vt_client = vt.Client("<apikey>")
-
-        # repo attributes
-        self.orig_owner = self.repo.owner.login
-        self.repo_name = self.repo.full_name
-        self.default_branch = self.repo.default_branch
 
         # tags parsed initially from the dispatcher
         self.tags = tags
@@ -90,12 +98,23 @@ class RepoAnalysis:
         with open(path, "rb") as fd:
             contents = fd.read()
 
-        # stores capabilities and results
+        # stores hashes and results from scans
         finalized = {
             "sha256": hashlib.sha256(contents).hexdigest(),
-            #"ssdeep": ssdeep.hash(contents),
+            # "ssdeep": ssdeep.hash(contents),
             "tags": self.tags,
         }
+
+        # determines if we should return results
+        is_suspicious = False
+
+        # trigger ClamAV scan first
+        results = scanner.instream(io.BytesIO(contents))
+        for path, tags in results.items():
+            found, name = tags[0], tags[1]
+            if found == "FOUND":
+                finalized["tags"] += [f"clamav:{name}"]
+                is_suspicious = True
 
         # file is a binary executable/library
         if lief.is_elf(path) or lief.is_pe(path) or lief.is_macho(path):
@@ -103,38 +122,37 @@ class RepoAnalysis:
 
             # TODO: check for similarity
 
-            # trigger ClamAV scan
-            results = scanner.scan(path)
-            for path, tags in results:
-                found, name = tags[0], tags[1]
-                if found == "FOUND":
-                    finalized["tags"] += [f"clamav:{name}"]
-
             # TODO: virustotal enterprise
             if self.vt_client:
                 pass
 
-            return finalized
+            is_suspicious = True
 
         # file is some compressed archive
-        if mimetypes.guess_type(path)[0] in ARCHIVE_MIME:
+        elif mimetypes.guess_type(path)[0] in ARCHIVE_MIME:
             finalized["tags"] += ["archive"]
 
             # TODO
             shutil.unpack_archive(path, self.uuid)
-            return finalized
+
+            is_suspicious = True
 
         # file is build script
-        if path.endswith(".sh") or "Makefile" in path:
+        elif path.endswith(".sh") or "Makefile" in path:
             finalized["tags"] += ["build-script"]
-            return finalized
+
+            is_suspicious = True
 
         # CI/CD runner was modified
-        if ".github/workflows" in path:
+        elif ".github/workflows" in path:
             finalized["tags"] += ["ci-modified"]
-            return finalized
 
-        return None
+            is_suspicious = True
+
+        if not is_suspicious:
+            return None
+        else:
+            return finalized
 
     def detect_suspicious(self):
         """
@@ -145,7 +163,7 @@ class RepoAnalysis:
         suspicious = {
             "name": self.repo_name,
             "token": self.token,
-            "suspicious": [],
+            "suspicious": {},
             "deltas": [],
             "releases": {},
         }
@@ -156,7 +174,7 @@ class RepoAnalysis:
 
         # clone repository to temporary path with random ID to prevent concurrent containers
         # from cloning to the same spot
-        path = self.repo.name + self.uuid
+        path = self.repo.name + "-" + self.uuid
         if os.path.exists(path):
             shutil.rmtree(path)
 
@@ -164,10 +182,10 @@ class RepoAnalysis:
 
         # iterate over all branches, and find commits not by original contributors
 
-        # add and sync with original repo
-        # git remote add upstream ORIGINAL
+        # add and sync with parent repo
+        # git remote add upstream PARENT
         # git fetch upstream
-        remote = fork_repo.create_remote("upstream", self.repo.clone_url)
+        remote = fork_repo.create_remote("upstream", self.parent.clone_url)
         remote.fetch()
 
         # get number of commits the fork is ahead by
@@ -175,7 +193,7 @@ class RepoAnalysis:
         count = fork_repo.git.rev_list(
             "--left-right",
             "--count",
-            f"{self.default_branch}...upstream/{self.default_branch}",
+            f"{self.branch}...upstream/{self.parent_branch}",
         )
         ahead = int(count.split("\t")[0])
         if ahead > 0:
@@ -186,16 +204,20 @@ class RepoAnalysis:
             for diff in head.diff(f"HEAD~{ahead}").iter_change_type("D"):
                 artifact = f"{path}/{diff.a_path}"
 
-                logger.debug("Analyzing user-introduced path for suspicious indicators")
+                logger.debug(f"Analyzing `{artifact}` for suspicious indicators")
                 artifact_res = self.analyze_artifact(artifact)
                 if not artifact_res is None:
-                    self._push_to_storage(artifact)
+
+                    # create object name to store in infected bucket
+                    base = diff.a_path.split("/")[-1]
+                    object_name = self.orig_name + "/" + self.fork_owner + "/" + base
+                    self._push_to_storage(artifact, object_name)
 
                     # filter out those with interesting results
-                    suspicious["suspicious"][artifact] += [artifact_res]
+                    suspicious["suspicious"][diff.a_path] = artifact_res
 
                 # record all files changed
-                suspicious["deltas"] += [artifact]
+                suspicious["deltas"] += [diff.a_path]
 
         shutil.rmtree(path)
 

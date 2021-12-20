@@ -17,10 +17,13 @@ import (
 	//"zntr.io/typogenerator/strategy"
 )
 
+// Describes the payload for an individual target fork that is enqueued to the
+// analyzer for static analysis
 type AnalyzerPayload struct {
-	Repo  string
-	Token string
-	Tags  []string
+	Parent string
+	Target string
+	Token  string
+	Tags   []string
 }
 
 type ForkFinder struct {
@@ -109,12 +112,12 @@ func (f *ForkFinder) RecoverValidForks() error {
 	}
 
 	owner := f.Inputs.Owner
-	name := f.Inputs.Repo
+	origName := f.Inputs.Repo
 
-	// do a depth-first search, and traverse each fork
+	// do a depth-first search, and traverse each fork for further children that should also be enqueued
 	log.Println("Iterating and sanity checking recovered forks")
 	for {
-		forks, res, err := f.Client.Repositories.ListForks(f.Ctx, owner, name, &opts)
+		forks, res, err := f.Client.Repositories.ListForks(f.Ctx, owner, origName, &opts)
 		if err != nil {
 			return err
 		}
@@ -144,9 +147,10 @@ func (f *ForkFinder) RecoverValidForks() error {
 			}
 
 			sendPayload := AnalyzerPayload{
-				Repo:  name,
-				Token: f.Inputs.Token,
-				Tags:  []string{},
+				Parent: owner + "/" + origName,
+				Target: name,
+				Token:  f.Inputs.Token,
+				Tags:   []string{},
 			}
 
 			payload, err := json.Marshal(sendPayload)

@@ -6,7 +6,7 @@ ENV PYTHONUNBUFFERED True
 # Install clamav
 RUN apt-get update && \
     apt-get install -y \
-        clamav-daemon clamav-freshclam clamav-unofficial-sigs \
+        git libgit2-dev clamav-daemon clamav-freshclam clamav-unofficial-sigs \
         ssdeep && \
     freshclam && \
     echo "TCPSocket 3310" >> /etc/clamav/clamd.conf && \
@@ -21,5 +21,5 @@ ENV APP_HOME /app
 WORKDIR $APP_HOME
 COPY . ./
 
-# Timeout is set to 0 to disable the timeouts of the workers to allow Cloud Run to handle instance scaling.
-CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 main:app
+# get updates, reload services and boot server
+CMD ["sh", "bootstrap.sh"]

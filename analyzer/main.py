@@ -43,11 +43,12 @@ def handler():
     payload = base64.b64decode(data).decode("utf-8")
     payload = json.loads(payload)
 
-    repo = payload["Repo"]
+    parent = payload["Parent"]
+    repo = payload["Target"]
     token = payload["Token"]
     tags = payload["Tags"]
     try:
-        analysis = RepoAnalysis(repo, token, tags)
+        analysis = RepoAnalysis(parent, repo, token, tags)
         analysis.detect_suspicious()
     except Exception as err:
         print(f"Error for `{repo}`: {err}")
