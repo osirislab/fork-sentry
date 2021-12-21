@@ -7,6 +7,7 @@ main.py
 import os
 import json
 import base64
+import logging
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -23,6 +24,9 @@ sentry_sdk.init(
     integrations=[FlaskIntegration()],
     traces_sample_rate=1.0,
 )
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 app = Flask(__name__)
 
@@ -51,7 +55,7 @@ def handler():
         analysis = RepoAnalysis(parent, repo, token, tags)
         analysis.detect_suspicious()
     except Exception as err:
-        print(f"Error for `{repo}`: {err}")
+        logger.error(f"Error for `{repo}`: {err}")
         sentry_sdk.capture_exception(err)
 
     return ("", 204)

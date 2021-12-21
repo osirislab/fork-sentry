@@ -140,13 +140,6 @@ class RepoAnalysis:
         # file is build script
         elif path.endswith(".sh") or "Makefile" in path:
             finalized["tags"] += ["build-script"]
-
-            is_suspicious = True
-
-        # CI/CD runner was modified
-        elif ".github/workflows" in path:
-            finalized["tags"] += ["ci-modified"]
-
             is_suspicious = True
 
         if not is_suspicious:
@@ -160,11 +153,11 @@ class RepoAnalysis:
         """
 
         logger.debug(f"Analyzing {self.repo_name}")
-        suspicious = {
+        results = {
             "name": self.repo_name,
             "token": self.token,
             "suspicious": {},
-            "deltas": [],
+            "file_deltas": [],
             "releases": {},
         }
 
@@ -206,7 +199,7 @@ class RepoAnalysis:
 
                 logger.debug(f"Analyzing `{artifact}` for suspicious indicators")
                 artifact_res = self.analyze_artifact(artifact)
-                if not artifact_res is None:
+                if artifact_res:
 
                     # create object name to store in infected bucket
                     base = diff.a_path.split("/")[-1]
@@ -214,10 +207,10 @@ class RepoAnalysis:
                     self._push_to_storage(artifact, object_name)
 
                     # filter out those with interesting results
-                    suspicious["suspicious"][diff.a_path] = artifact_res
+                    results["suspicious"][diff.a_path] = artifact_res
 
                 # record all files changed
-                suspicious["deltas"] += [diff.a_path]
+                results["file_deltas"] += [diff.a_path]
 
         shutil.rmtree(path)
 
@@ -226,17 +219,43 @@ class RepoAnalysis:
         for release in self.repo.get_releases():
             tag = release.tag_name
 
-            suspicious["releases"][tag] = []
+            results["releases"][tag] = []
             for asset in release.get_assets():
-                suspicious["releases"][tag] += [
+
+                filename = asset.name
+                url = asset.browser_download_url
+
+                # download file to disk
+                resp = requests.get(url)
+                with open(filename, "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=1024):
+                        if chunk:
+                            f.write(chunk)
+
+                logger.debug(f"Analyzing `{artifact}` for suspicious indicators")
+                artifact_res = self.analyze_artifact(filename)
+                if artifact_res:
+
+                    # create object name to store in infected bucket
+                    object_name = (
+                        self.orig_name + "/" + self.fork_owner + "/" + filename
+                    )
+                    self._push_to_storage(artifact, object_name)
+
+                    # filter out those with interesting results
+                    results["suspicious"][filename] = artifact_res
+
+                os.remove(filename)
+
+                results["releases"][tag] += [
                     {
-                        "name": asset.name,
-                        "url": asset.browser_download_url,
+                        "name": filename,
+                        "url": url,
                     }
                 ]
                 logger.debug(f"{asset.name}: {asset.browser_download_url}")
 
-        self._generate_alerts(suspicious)
+        self._generate_alerts(results)
 
     def _push_to_storage(self, path: str, dest: str) -> None:
         """
@@ -253,7 +272,7 @@ class RepoAnalysis:
         if (
             len(results["suspicious"]) == 0
             and len(results["releases"]) == 0
-            and len(results["deltas"]) == 0
+            and len(results["file_deltas"]) == 0
         ):
             logger.info(f"Nothing found for fork {self.repo_name}")
             return

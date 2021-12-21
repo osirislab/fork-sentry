@@ -1,12 +1,6 @@
 # Log commands, and exit on error.
 set -x -o errexit
 
-# Check for clam updates on container startup
-apt-get update  && apt-get install clamav-daemon -y
-
-# Get latest definitions
-freshclam
-
 # Reload Services
 service clamav-daemon force-reload
 service clamav-freshclam force-reload
