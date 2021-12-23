@@ -25,7 +25,7 @@ from github import Github
 from google.cloud import pubsub_v1, storage
 from google.cloud import logging as cloudlogging
 
-from scanner import IGNORE_SOURCE_EXTS, ARCHIVE_MIME
+from consts import IGNORE_SOURCE_EXTS, ARCHIVE_MIME
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -77,15 +77,15 @@ class RepoAnalysis:
         self.orig_name = self.parent.full_name
         self.parent_branch = self.parent.default_branch
 
-        # VT client
+        # Virustotal client
         self.vt_client = None
         if vt_token:
-            self.vt_client = vt.Client("<apikey>")
+            self.vt_client = vt.Client(vt_token)
 
         # tags parsed initially from the dispatcher
         self.tags = tags
 
-    def analyze_artifact(self, path) -> t.Optional[str]:
+    def _analyze_artifact(self, path) -> t.Optional[str]:
         """
         Heuristics to check if a modified file is suspicious and should be enqueued for further analysis.
         """
@@ -198,7 +198,7 @@ class RepoAnalysis:
                 artifact = f"{path}/{diff.a_path}"
 
                 logger.debug(f"Analyzing `{artifact}` for suspicious indicators")
-                artifact_res = self.analyze_artifact(artifact)
+                artifact_res = self._analyze_artifact(artifact)
                 if artifact_res:
 
                     # create object name to store in infected bucket
@@ -233,7 +233,7 @@ class RepoAnalysis:
                             f.write(chunk)
 
                 logger.debug(f"Analyzing `{artifact}` for suspicious indicators")
-                artifact_res = self.analyze_artifact(filename)
+                artifact_res = self._analyze_artifact(filename)
                 if artifact_res:
 
                     # create object name to store in infected bucket

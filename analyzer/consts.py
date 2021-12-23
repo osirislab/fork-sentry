@@ -26,12 +26,3 @@ ARCHIVE_MIME = [
     "application/x-tar",
     "application/x-7z-compressed",
 ]
-
-
-class Scanner:
-    def __init__(self, path, tags):
-        self.path = path
-
-    @property
-    def results(self):
-        return None
