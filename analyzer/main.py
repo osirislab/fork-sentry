@@ -50,13 +50,13 @@ def handler():
     parent = payload["Parent"]
     repo = payload["Target"]
     token = payload["Token"]
-    tags = payload["Tags"]
     try:
-        analysis = RepoAnalysis(parent, repo, token, tags)
+        analysis = RepoAnalysis(parent, repo, token)
         analysis.detect_suspicious()
     except Exception as err:
         logger.error(f"Error for `{repo}`: {err}")
         sentry_sdk.capture_exception(err)
+        return ("", 500)
 
     return ("", 204)
 

@@ -14,6 +14,7 @@ import shutil
 import mimetypes
 import hashlib
 import typing as t
+import difflib
 
 import git
 import lief
@@ -57,7 +58,6 @@ class RepoAnalysis:
         parent_name: str,
         repo_name: str,
         token: str,
-        tags: t.List[str],
         vt_token: t.Optional[str] = None,
     ):
         self.gh = Github(token)
@@ -70,82 +70,89 @@ class RepoAnalysis:
         )
         self.fork_owner = self.repo.owner.login
         self.repo_name = self.repo.full_name
-        self.branch = self.repo.default_branch
 
         # parent repo attributes
         self.parent = self.gh.get_repo(parent_name)
         self.orig_name = self.parent.full_name
-        self.parent_branch = self.parent.default_branch
+        self.repo_branches = list([b.name for b in self.parent.get_branches()])
+        self.parent_default = self.parent.default_branch
 
         # Virustotal client
         self.vt_client = None
         if vt_token:
             self.vt_client = vt.Client(vt_token)
 
-        # tags parsed initially from the dispatcher
-        self.tags = tags
-
     def _analyze_artifact(self, path) -> t.Optional[str]:
         """
         Heuristics to check if a modified file is suspicious and should be enqueued for further analysis.
         """
 
-        # TODO: will ignore source code changes for now
+        # ignore source code changes for now
         _, ext = os.path.splitext(path)
         if ext in IGNORE_SOURCE_EXTS:
             return None
 
-        with open(path, "rb") as fd:
-            contents = fd.read()
+        # stores suspicious indicators
+        iocs = []
 
-        # stores hashes and results from scans
-        finalized = {
-            "sha256": hashlib.sha256(contents).hexdigest(),
-            # "ssdeep": ssdeep.hash(contents),
-            "tags": self.tags,
-        }
+        # stores all files to analyze, if more are extrapolated
+        targets = []
 
-        # determines if we should return results
-        is_suspicious = False
-
-        # trigger ClamAV scan first
-        results = scanner.instream(io.BytesIO(contents))
-        for path, tags in results.items():
-            found, name = tags[0], tags[1]
-            if found == "FOUND":
-                finalized["tags"] += [f"clamav:{name}"]
-                is_suspicious = True
+        # binary parser helper
+        is_bin = (
+            lambda path: lief.is_elf(path) or lief.is_pe(path) or lief.is_macho(path)
+        )
 
         # file is a binary executable/library
-        if lief.is_elf(path) or lief.is_pe(path) or lief.is_macho(path):
-            finalized["tags"] += ["binary"]
-
-            # TODO: check for similarity
-
-            # TODO: virustotal enterprise
-            if self.vt_client:
-                pass
-
-            is_suspicious = True
+        if is_bin(path):
+            iocs += ["binary"]
+            targets += [path]
 
         # file is some compressed archive
         elif mimetypes.guess_type(path)[0] in ARCHIVE_MIME:
-            finalized["tags"] += ["archive"]
+            iocs += ["archive"]
 
-            # TODO
-            shutil.unpack_archive(path, self.uuid)
-
-            is_suspicious = True
+            # extract contents and enqueue all files for scanning
+            unpacked = "unpacked_" + self.uuid
+            shutil.unpack_archive(filename=path, extract_dir=unpacked)
+            for dir, _, name in os.walk(unpacked):
+                targets += os.path.join(dir, name)
 
         # file is build script
-        elif path.endswith(".sh") or "Makefile" in path:
-            finalized["tags"] += ["build-script"]
-            is_suspicious = True
+        elif path.endswith(".sh") or path.endswith(".bat") or path.endswith(".run"):
+            iocs += ["build-script"]
 
-        if not is_suspicious:
+        # threat detection time
+        for target in targets:
+
+            # do binary similarity analysis with samples we've seen
+            if is_bin(target):
+                pass
+
+            # trigger ClamAV scan first
+            with open(target, "rb") as fd:
+                contents = io.BytesIO(fd.read())
+                results = scanner.instream(contents)
+                for path, tags in results.items():
+                    found, name = tags[0], tags[1]
+                    if found == "FOUND":
+                        iocs += [f"clamav:{name}"]
+
+            # trigger scan with VTotal enterprise
+
+        # diffed file is not suspicious
+        if len(iocs) == 0:
             return None
-        else:
-            return finalized
+
+        # otherwise return hashes and indicators
+        with open(path, "rb") as fd:
+            contents = fd.read()
+
+        return {
+            "sha256": hashlib.sha256(contents).hexdigest(),
+            # "ssdeep": ssdeep.hash(contents),
+            "iocs": iocs,
+        }
 
     def detect_suspicious(self):
         """
@@ -154,12 +161,25 @@ class RepoAnalysis:
 
         logger.debug(f"Analyzing {self.repo_name}")
         results = {
+            # metadata needed for further processing
             "name": self.repo_name,
             "token": self.token,
+            # actually malicious indicators
+            # - typosquatting: edit distance of repo name is suspiciously small
+            # - suspicious: all artifacts that have some IOCs
+            "typosquatting": False,
             "suspicious": {},
+            # all changes in-tree and releases, regardless of whether or not they are malicious
             "file_deltas": [],
             "releases": {},
         }
+
+        logger.info(f"{self.repo_name}: checking for typosquatting")
+        distance = RepoAnalysis._levenshtein_distance(
+            self.fork_owner, self.parent.owner.login
+        )
+        if distance <= 5:
+            results["typosquatting"] = True
 
         # find commits by the fork owner and/or user known as a contributor, and
         # detect if any of the changes are new artifacts we need to analyze
@@ -169,48 +189,72 @@ class RepoAnalysis:
         # from cloning to the same spot
         path = self.repo.name + "-" + self.uuid
         if os.path.exists(path):
+            logger.debug("Removing previous instance of repository on disk")
             shutil.rmtree(path)
 
+        logger.debug(f"Cloning the repository to {path}")
         fork_repo = git.Repo.clone_from(self.repo.clone_url, path)
 
-        # iterate over all branches, and find commits not by original contributors
+        logger.debug("Recovering remote origins")
+        origin = fork_repo.remotes.origin
+        remotes = origin.pull()
 
         # add and sync with parent repo
         # git remote add upstream PARENT
         # git fetch upstream
+        logger.debug("Setting and fetching upstream remote")
         remote = fork_repo.create_remote("upstream", self.parent.clone_url)
         remote.fetch()
 
-        # get number of commits the fork is ahead by
-        # git rev-list --left-right --count origin/master...upstream/master
-        count = fork_repo.git.rev_list(
-            "--left-right",
-            "--count",
-            f"{self.branch}...upstream/{self.parent_branch}",
-        )
-        ahead = int(count.split("\t")[0])
-        if ahead > 0:
+        # iterate over all branches, and find commits not by original contributors
+        remotes = [remote.name for remote in remotes]
+        for remote in remotes:
 
-            # run check against files that are recently created at HEAD
-            # git --no-pager diff --name-only HEAD~{AHEAD}
-            head = fork_repo.head.commit
-            for diff in head.diff(f"HEAD~{ahead}").iter_change_type("D"):
-                artifact = f"{path}/{diff.a_path}"
+            # checkout branch in the current repo
+            logger.debug(f"Analyzing branch {remote}")
+            fork_repo.git.checkout(remote)
 
-                logger.debug(f"Analyzing `{artifact}` for suspicious indicators")
-                artifact_res = self._analyze_artifact(artifact)
-                if artifact_res:
+            # check if branch exists for upstream remote, otherwise compare
+            # with the default that exists, as it must be newly introduced
+            branch = remote.split("/")[1]
+            if not branch in self.repo_branches:
+                cmp_branch = self.parent_default
+            else:
+                cmp_branch = branch
 
-                    # create object name to store in infected bucket
-                    base = diff.a_path.split("/")[-1]
-                    object_name = self.orig_name + "/" + self.fork_owner + "/" + base
-                    self._push_to_storage(artifact, object_name)
+            # get number of commits the fork is ahead by
+            # git rev-list --left-right --count origin/master...upstream/master
+            logger.debug(f"Checking for changes to analyze in {remote}")
+            count = fork_repo.git.rev_list(
+                "--left-right",
+                "--count",
+                f"{remote}...upstream/{cmp_branch}",
+            )
+            ahead = int(count.split("\t")[0])
+            if ahead > 0:
 
-                    # filter out those with interesting results
-                    results["suspicious"][diff.a_path] = artifact_res
+                # run check against files that are recently created at HEAD
+                # git --no-pager diff --name-only HEAD~{AHEAD}
+                head = fork_repo.head.commit
+                for diff in head.diff(f"HEAD~{ahead}").iter_change_type("D"):
+                    artifact = f"{path}/{diff.a_path}"
 
-                # record all files changed
-                results["file_deltas"] += [diff.a_path]
+                    logger.debug(f"Analyzing `{artifact}` for suspicious indicators")
+                    artifact_res = self._analyze_artifact(artifact)
+                    if artifact_res:
+
+                        # create object name to store in infected bucket
+                        base = diff.a_path.split("/")[-1]
+                        object_name = (
+                            self.orig_name + "/" + self.fork_owner + "/" + base
+                        )
+                        self._push_to_storage(artifact, object_name)
+
+                        # filter out those with interesting results
+                        results["suspicious"][diff.a_path] = artifact_res
+
+                    # record all files changed
+                    results["file_deltas"] += [diff.a_path]
 
         shutil.rmtree(path)
 
@@ -257,6 +301,19 @@ class RepoAnalysis:
 
         self._generate_alerts(results)
 
+    @staticmethod
+    def _levenshtein_distance(str1, str2):
+        counter = {"+": 0, "-": 0}
+        distance = 0
+        for edit_code, *_ in difflib.ndiff(str1, str2):
+            if edit_code == " ":
+                distance += max(counter.values())
+                counter = {"+": 0, "-": 0}
+            else:
+                counter[edit_code] += 1
+        distance += max(counter.values())
+        return distance
+
     def _push_to_storage(self, path: str, dest: str) -> None:
         """
         Upload artifacts to storage for auxiliary analysis.
@@ -270,7 +327,8 @@ class RepoAnalysis:
         Helper to generate alerts to different sources if artifacts found are suspicious.
         """
         if (
-            len(results["suspicious"]) == 0
+            not results["typosquatting"]
+            and len(results["suspicious"]) == 0
             and len(results["releases"]) == 0
             and len(results["file_deltas"]) == 0
         ):

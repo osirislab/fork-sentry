@@ -23,7 +23,6 @@ type AnalyzerPayload struct {
 	Parent string
 	Target string
 	Token  string
-	Tags   []string
 }
 
 type ForkFinder struct {
@@ -150,7 +149,6 @@ func (f *ForkFinder) RecoverValidForks() error {
 				Parent: owner + "/" + origName,
 				Target: name,
 				Token:  f.Inputs.Token,
-				Tags:   []string{},
 			}
 
 			payload, err := json.Marshal(sendPayload)
