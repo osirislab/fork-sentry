@@ -2,6 +2,7 @@
 set -x -o errexit
 
 # Reload Services
+freshclam
 service clamav-daemon force-reload
 service clamav-freshclam force-reload
 

@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import github
 from flask import Flask, request
 
 import sentry_sdk
@@ -53,6 +54,13 @@ def handler():
     try:
         analysis = RepoAnalysis(parent, repo, token)
         analysis.detect_suspicious()
+
+    # rate limit reached, backoff by pushing to seperate queue
+    except github.RateLimitExceededException as err:
+        analysis.backoff_queue(payload)
+        return ("", 204)
+
+    # handle all other runtime errors
     except Exception as err:
         logger.error(f"Error for `{repo}`: {err}")
         sentry_sdk.capture_exception(err)

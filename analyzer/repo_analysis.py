@@ -22,6 +22,7 @@ import clamd
 import vt
 import requests
 from github import Github
+from datasketch import MinHashLSH, MinHash
 
 from google.cloud import pubsub_v1, storage
 from google.cloud import logging as cloudlogging
@@ -43,6 +44,9 @@ bucket = storage_client.bucket(os.getenv("INFECTED_BUCKET"))
 _client = cloudlogging.Client()
 _handler = _client.get_default_handler()
 logger.addHandler(_handler)
+
+# url for serverless redis host
+redis_host = os.environ.get('REDISHOST')
 
 # static analysis scanner
 scanner = clamd.ClamdUnixSocket()
@@ -82,6 +86,15 @@ class RepoAnalysis:
         if vt_token:
             self.vt_client = vt.Client(vt_token)
 
+        # Minhash for binary similarity
+        self.lsh = MinHashLSH(
+            threshold=0.75, num_perm=128, storage_config={
+                'type': 'redis',
+                'redis': {'host': redis_host, 'port': 6379},
+            }
+        )
+
+
     def _analyze_artifact(self, path) -> t.Optional[str]:
         """
         Heuristics to check if a modified file is suspicious and should be enqueued for further analysis.
@@ -118,7 +131,7 @@ class RepoAnalysis:
             for dir, _, name in os.walk(unpacked):
                 targets += os.path.join(dir, name)
 
-        # file is build script
+        # file is build script, tag but won't analyze
         elif path.endswith(".sh") or path.endswith(".bat") or path.endswith(".run"):
             iocs += ["build-script"]
 
@@ -126,8 +139,12 @@ class RepoAnalysis:
         for target in targets:
 
             # do binary similarity analysis with samples we've seen
+            """
             if is_bin(target):
-                pass
+                results = self._detect_sims(target)
+                if not results is None:
+                    pass
+            """
 
             # trigger ClamAV scan first
             with open(target, "rb") as fd:
@@ -302,7 +319,10 @@ class RepoAnalysis:
         self._generate_alerts(results)
 
     @staticmethod
-    def _levenshtein_distance(str1, str2):
+    def _levenshtein_distance(str1, str2) -> int:
+        """
+        Helper to compute leventhestein distance between inputs to help determine typosquatting.
+        """
         counter = {"+": 0, "-": 0}
         distance = 0
         for edit_code, *_ in difflib.ndiff(str1, str2):
@@ -316,7 +336,7 @@ class RepoAnalysis:
 
     def _push_to_storage(self, path: str, dest: str) -> None:
         """
-        Upload artifacts to storage for auxiliary analysis.
+        Helper to push artifacts to storage for cold storage and view by maintainers.
         """
         logger.info(f"Pushing potentially malicious artifact to `{dest}`")
         blob = bucket.blob(dest)
@@ -337,4 +357,12 @@ class RepoAnalysis:
 
         logger.info(f"Outputting alerts for `{self.repo_name}`")
         alerts = json.dumps(results, indent=2).encode("utf-8")
+        publisher.publish(topic, alerts)
+
+    def backoff_queue(self) -> None:
+        """
+        Re-enqueue a repository to a seperate queue if we hit the rate limit. That one will
+        push all requests back to this analyzer scheduled in the next hour.
+        """
+        msg = json.dumps(results, indent=2).encode("utf-8")
         publisher.publish(topic, alerts)

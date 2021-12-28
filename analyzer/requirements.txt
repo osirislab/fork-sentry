@@ -19,3 +19,4 @@ lief
 clamd
 #ssdeep
 vt-py
+datasketch
