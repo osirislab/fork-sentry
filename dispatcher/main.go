@@ -85,14 +85,14 @@ func DispatchHandler(w http.ResponseWriter, r *http.Request) {
 		ff, err := NewForkFinder(ctx, &payload)
 		if err != nil {
 			log.Fatalf("Instantiating ForkFinder failed: %s", err)
-			//http.Error(w, "Bad Request", http.StatusBadRequest)
+			http.Error(w, "Bad Request", http.StatusBadRequest)
 			return
 		}
 		defer ff.Close()
 
 		if err := ff.FindAndDispatch(); err != nil {
 			log.Fatalf("Excavating and dispatching forks failed: %s", err)
-			//http.Error(w, "Bad Request", http.StatusBadRequest)
+			http.Error(w, "Bad Request", http.StatusBadRequest)
 			return
 		}
 

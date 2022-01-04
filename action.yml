@@ -19,7 +19,9 @@ inputs:
     required: false
     default: 'https://fork-dispatcher-nlztqjfqgq-uc.a.run.app'
 
-  # TODO: VT Enterprise
+  vt_token:
+    description: 'API token for VirusTotal (preferably Enterprise to mitigate rate limit)'
+    required: false
 
 runs:
   using: 'node12'

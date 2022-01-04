@@ -20,9 +20,9 @@ import git
 import lief
 import clamd
 import vt
+import ssdeep
 import requests
 from github import Github
-from datasketch import MinHashLSH, MinHash
 
 from google.cloud import pubsub_v1, storage
 from google.cloud import logging as cloudlogging
@@ -46,7 +46,7 @@ _handler = _client.get_default_handler()
 logger.addHandler(_handler)
 
 # url for serverless redis host
-redis_host = os.environ.get('REDISHOST')
+redis_host = os.environ.get("REDISHOST")
 
 # static analysis scanner
 scanner = clamd.ClamdUnixSocket()
@@ -88,12 +88,13 @@ class RepoAnalysis:
 
         # Minhash for binary similarity
         self.lsh = MinHashLSH(
-            threshold=0.75, num_perm=128, storage_config={
-                'type': 'redis',
-                'redis': {'host': redis_host, 'port': 6379},
-            }
+            threshold=0.75,
+            num_perm=128,
+            storage_config={
+                "type": "redis",
+                "redis": {"host": redis_host, "port": 6379},
+            },
         )
-
 
     def _analyze_artifact(self, path) -> t.Optional[str]:
         """
@@ -108,7 +109,7 @@ class RepoAnalysis:
         # stores suspicious indicators
         iocs = []
 
-        # stores all files to analyze, if more are extrapolated
+        # stores all files to analyze, if more are extracted
         targets = []
 
         # binary parser helper
@@ -120,6 +121,11 @@ class RepoAnalysis:
         if is_bin(path):
             iocs += ["binary"]
             targets += [path]
+
+             # do binary similarity analysis with samples we've seen
+            results = self._detect_sims(path)
+            if not results is None:
+                return results
 
         # file is some compressed archive
         elif mimetypes.guess_type(path)[0] in ARCHIVE_MIME:
@@ -137,14 +143,6 @@ class RepoAnalysis:
 
         # threat detection time
         for target in targets:
-
-            # do binary similarity analysis with samples we've seen
-            """
-            if is_bin(target):
-                results = self._detect_sims(target)
-                if not results is None:
-                    pass
-            """
 
             # trigger ClamAV scan first
             with open(target, "rb") as fd:
@@ -170,6 +168,11 @@ class RepoAnalysis:
             # "ssdeep": ssdeep.hash(contents),
             "iocs": iocs,
         }
+
+    def _detect_sims(self, path: str):
+        """
+        """
+        pass
 
     def detect_suspicious(self):
         """

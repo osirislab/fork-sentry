@@ -3,11 +3,11 @@ FROM python:3.9
 # Allow statements and log messages to immediately appear in the Cloud Run logs
 ENV PYTHONUNBUFFERED True
 
-# Install clamav
+# Install analysis dependencies
 RUN apt-get update && \
     apt-get install -y \
         git libgit2-dev clamav-daemon clamav-freshclam clamav-unofficial-sigs \
-        ssdeep && \
+        ssdeep libfuzzy-dev && \
     freshclam && \
     echo "TCPSocket 3310" >> /etc/clamav/clamd.conf && \
     echo "TCPAddr 127.0.0.1" >> /etc/clamav/clamd.conf

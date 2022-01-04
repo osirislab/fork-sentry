@@ -17,6 +17,6 @@ python-dotenv
 # analysis
 lief
 clamd
-#ssdeep
+ssdeep
 vt-py
-datasketch
+#datasketch
