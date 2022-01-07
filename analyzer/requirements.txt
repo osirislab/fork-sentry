@@ -11,6 +11,7 @@ PyGithub
 Flask
 requests
 gunicorn
+sqlalchemy
 sentry-sdk[flask]
 python-dotenv
 
@@ -19,4 +20,3 @@ lief
 clamd
 ssdeep
 vt-py
-#datasketch

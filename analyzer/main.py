@@ -58,7 +58,7 @@ def handler():
     # rate limit reached, backoff by pushing to seperate queue
     except github.RateLimitExceededException as err:
         analysis.backoff_queue(payload)
-        return ("", 204)
+        return ("", 500)
 
     # handle all other runtime errors
     except Exception as err:

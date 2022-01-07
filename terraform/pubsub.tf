@@ -15,7 +15,7 @@ resource "google_pubsub_subscription" "fork_analyzer_sub" {
 
   ack_deadline_seconds = 10
 
-  // Make push subscription to the CLoud Run listener endpoint
+  // Make push subscription to the Cloud Run listener endpoint
   push_config {
     push_endpoint = google_cloud_run_service.analyzer.status[0].url
 

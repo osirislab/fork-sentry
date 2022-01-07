@@ -23,6 +23,7 @@ import vt
 import ssdeep
 import requests
 from github import Github
+from sqlalchemy import create_engine
 
 from google.cloud import pubsub_v1, storage
 from google.cloud import logging as cloudlogging
@@ -45,8 +46,9 @@ _client = cloudlogging.Client()
 _handler = _client.get_default_handler()
 logger.addHandler(_handler)
 
-# url for serverless redis host
-redis_host = os.environ.get("REDISHOST")
+# database url
+db_url = os.getenv("DATABASE_URL")
+engine = create_engine(db_url, echo=True, future=True)
 
 # static analysis scanner
 scanner = clamd.ClamdUnixSocket()
@@ -86,16 +88,6 @@ class RepoAnalysis:
         if vt_token:
             self.vt_client = vt.Client(vt_token)
 
-        # Minhash for binary similarity
-        self.lsh = MinHashLSH(
-            threshold=0.75,
-            num_perm=128,
-            storage_config={
-                "type": "redis",
-                "redis": {"host": redis_host, "port": 6379},
-            },
-        )
-
     def _analyze_artifact(self, path) -> t.Optional[str]:
         """
         Heuristics to check if a modified file is suspicious and should be enqueued for further analysis.
@@ -122,7 +114,7 @@ class RepoAnalysis:
             iocs += ["binary"]
             targets += [path]
 
-             # do binary similarity analysis with samples we've seen
+            # do binary similarity analysis with samples we've seen
             results = self._detect_sims(path)
             if not results is None:
                 return results
@@ -144,16 +136,22 @@ class RepoAnalysis:
         # threat detection time
         for target in targets:
 
-            # trigger ClamAV scan first
             with open(target, "rb") as fd:
-                contents = io.BytesIO(fd.read())
-                results = scanner.instream(contents)
-                for path, tags in results.items():
-                    found, name = tags[0], tags[1]
-                    if found == "FOUND":
-                        iocs += [f"clamav:{name}"]
+                contents = fd.read()
+                iobuf = io.BytesIO(contents)
 
-            # trigger scan with VTotal enterprise
+            # trigger ClamAV scan first
+            results = scanner.instream(iobuf)
+            for path, tags in results.items():
+                found, name = tags[0], tags[1]  
+                if found == "FOUND":
+                    iocs += [f"clamav:{name}"]
+
+            # trigger scan with VTotal if API key is supplied
+            if self.vt_client:
+                analysis = self.vt_client.scan_file(contents, wait_for_completion=True)
+                vtotal_mal = analysis.last_analysis_stats["malicious"]
+                iocs += [f"virustotal:{vtotal_mal}"]
 
         # diffed file is not suspicious
         if len(iocs) == 0:
@@ -165,14 +163,21 @@ class RepoAnalysis:
 
         return {
             "sha256": hashlib.sha256(contents).hexdigest(),
-            # "ssdeep": ssdeep.hash(contents),
             "iocs": iocs,
         }
 
     def _detect_sims(self, path: str):
         """
+        Given a binary, generate a fuzzy hash, and query for matching items against our database.
         """
-        pass
+        with open(path, "rb") as fd:
+            fhash = ssdeep.hash(fd.read())
+
+        # recover attributes from fuzzy hash
+        chunksize, chunk, double_chunk = fhash.split(':')
+        chunksize = int(chunksize)
+
+
 
     def detect_suspicious(self):
         """
@@ -182,6 +187,7 @@ class RepoAnalysis:
         logger.debug(f"Analyzing {self.repo_name}")
         results = {
             # metadata needed for further processing
+            "parent": self.orig_name,
             "name": self.repo_name,
             "token": self.token,
             # actually malicious indicators
@@ -365,7 +371,7 @@ class RepoAnalysis:
     def backoff_queue(self) -> None:
         """
         Re-enqueue a repository to a seperate queue if we hit the rate limit. That one will
-        push all requests back to this analyzer scheduled in the next hour.
+        push all requests back to this analyzer scheduled in the next hour. (TODO)
         """
         msg = json.dumps(results, indent=2).encode("utf-8")
         publisher.publish(topic, alerts)
