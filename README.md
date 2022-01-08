@@ -14,7 +14,7 @@ In the past, __Fork Sentry__ has already found and taken down instances of:
 
 (TODO: include writeups, and links to paper releases)
 
-## Actions Usage
+## Usage
 
 __Fork Sentry__ operates out of a seperate cloud infrastructure, which you can self-host with our open-sourced code, or reach out for an API token (WIP) to the existing one. This way we're able to scale analysis to large volumes of forks, while outsourcing scheduling to Action's CI/CD runner.
 
@@ -44,6 +44,10 @@ jobs:
 
 ## Architecture
 
+![infrastructure](infrastructure.png)
+
+For more information about self-hosting, check out the spec here.
+
 ### Dispatcher
 
 The Golang dispatcher ingests authenticated requests for analysis of a target parent repository. The request can
@@ -53,9 +57,22 @@ be invoked adhoc similarly like so:
 $ curl -X POST -d '{"owner":"OWNER", "name": "NAME", "github_token": "ghp_TOKEN", "api_token": "API_TOKEN"}' -H 'Content-Type: application/json' https://endpoint.example/dispatch
 ```
 
-or preferably through the Actions runner itself, which can be put on a schedule. The __dispatcher__ extracts all forks and enqueues them for the analyzer.
+or preferably through the Actions runner itself, which can be put on a schedule. The __dispatcher__ extracts all forks and publishes each for analyzers to subscribe and
+consume.
 
 ### Analyzer
+
+For an individual fork, we check the following:
+
+* Name typosquatting
+* Known malware signatures
+* Suspicious capabilities
+
+Previously detected samples are also checked using their _locality-sensitive hashes_ against a database with [this technique](https://www.virusbulletin.com/virusbulletin/2015/11/optimizing-ssdeep-use-scale).
+
+### Alert Function
+
+Potentially malicious forks are written back to the issue tracker in this step.
 
 ## License
 

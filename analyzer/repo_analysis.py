@@ -56,7 +56,10 @@ scanner = clamd.ClamdUnixSocket()
 
 class RepoAnalysis:
     """
-    Implements an interface for conducting fork integrity analysis across a single repository.
+    Implements an interface for conducting fork integrity analysis across a single fork repository.
+
+    During analysis, recovers all interesting filetypes from both repository tree and branches, and
+    applies malware detection techniques.
     """
 
     def __init__(
@@ -67,9 +70,9 @@ class RepoAnalysis:
         vt_token: t.Optional[str] = None,
     ):
         self.gh = Github(token)
+        self.token = token
 
         # fork attributes
-        self.token = token
         self.repo = self.gh.get_repo(repo_name)
         self.uuid = "".join(
             random.choice(string.ascii_uppercase + string.digits) for _ in range(6)
@@ -143,7 +146,7 @@ class RepoAnalysis:
             # trigger ClamAV scan first
             results = scanner.instream(iobuf)
             for path, tags in results.items():
-                found, name = tags[0], tags[1]  
+                found, name = tags[0], tags[1]
                 if found == "FOUND":
                     iocs += [f"clamav:{name}"]
 
@@ -174,10 +177,8 @@ class RepoAnalysis:
             fhash = ssdeep.hash(fd.read())
 
         # recover attributes from fuzzy hash
-        chunksize, chunk, double_chunk = fhash.split(':')
+        chunksize, chunk, double_chunk = fhash.split(":")
         chunksize = int(chunksize)
-
-
 
     def detect_suspicious(self):
         """
