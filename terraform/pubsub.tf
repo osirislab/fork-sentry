@@ -4,16 +4,13 @@ resource "google_pubsub_topic" "fork_analysis_ingestion" {
   name = "fork_analysis_ingestion"
 }
 
-resource "google_pubsub_topic" "fork_analysis_dlq" {
-  name = "fork_analysis_dlq"
-}
-
 // Pushes an excavated fork to analyzer
 resource "google_pubsub_subscription" "fork_analyzer_sub" {
   name  = "fork_analyzer_sub"
   topic = google_pubsub_topic.fork_analysis_ingestion.name
 
-  ack_deadline_seconds = 10
+  // Forks will take time to acknowledge, set deadline to max
+  ack_deadline_seconds = 600
 
   // Make push subscription to the Cloud Run listener endpoint
   push_config {
@@ -36,6 +33,17 @@ resource "google_pubsub_subscription" "fork_analyzer_sub" {
   }
 }
 
+// Retry queue for rate-limited messages
+resource "google_pubsub_topic" "fork_analysis_retry" {
+  name = "fork_analysis_retry"
+}
+
+
+// Dead letter queue for non-retryable messages
+resource "google_pubsub_topic" "fork_analysis_dlq" {
+  name = "fork_analysis_dlq"
+}
+
 // Subscription for dead letter queue
 resource "google_pubsub_subscription" "fork_analysis_dlq_sub" {
   name  = "fork_analysis_dlq_sub"
@@ -48,16 +56,12 @@ resource "google_pubsub_topic" "fork_alert_output" {
   name = "fork_alert_output"
 }
 
-resource "google_pubsub_topic" "fork_out_dlq" {
-  name = "fork_out_dlq"
-}
-
 // Pushes results to trigger alert function
 resource "google_pubsub_subscription" "fork_out_sub" {
   name  = "fork_alert_output_sub"
   topic = google_pubsub_topic.fork_alert_output.name
 
-  ack_deadline_seconds = 10
+  ack_deadline_seconds = 20
 
   // Make push subscription to the HTTP endpoint of function
   push_config {
@@ -78,6 +82,16 @@ resource "google_pubsub_subscription" "fork_out_sub" {
     dead_letter_topic     = google_pubsub_topic.fork_out_dlq.id
     max_delivery_attempts = 5
   }
+}
+
+// Retry queue for rate-limited messages
+resource "google_pubsub_topic" "fork_out_retry" {
+  name = "fork_out_retry"
+}
+
+// Dead letter queue for non-retryable messages
+resource "google_pubsub_topic" "fork_out_dlq" {
+  name = "fork_out_dlq"
 }
 
 // Subscription for dead letter queue

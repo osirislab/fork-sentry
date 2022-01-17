@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-main.py
+alert.py
 
     Alert Function triggered by PubSub to output detected malicious forks to issue tracker.
 """
@@ -8,16 +8,18 @@ import json
 import base64
 from github import Github, RateLimitExceededException
 
+
 def handler(request):
     try:
         _handler(request)
-    
+
     # in the edge case where we've exhausted the rate limit from
     # analysis earlier, backoff creating issue alerts until the next hour.
     except RateLimitExceededException as err:
-        return ("", 500) 
+        return ("", 500)
 
     return ("", 204)
+
 
 def _handler(request):
     """
@@ -41,7 +43,7 @@ def _handler(request):
     gh = Github(payload["token"])
 
     parent = payload["parent"]
-    child = payload['name']
+    child = payload["name"]
     repo = gh.get_repo(parent)
 
     # get or create a Fork Sentry label for search and tagging issues
