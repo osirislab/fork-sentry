@@ -10,12 +10,13 @@ from github import Github, RateLimitExceededException
 
 
 def handler(request):
+    """
+    In the edge case where we've exhausted the rate limit from
+    analysis earlier, backoff creating issue alerts until the next hour.
+    """
     try:
         _handler(request)
-
-    # in the edge case where we've exhausted the rate limit from
-    # analysis earlier, backoff creating issue alerts until the next hour.
-    except RateLimitExceededException as err:
+    except RateLimitExceededException:
         return ("", 500)
 
     return ("", 204)

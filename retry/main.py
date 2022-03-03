@@ -2,8 +2,8 @@
 """
 retry.py
 
-    Alert Function triggered by HTTP endpoints to pull from respective pubsub queues
-    and retry analysis/alerting again due to a rate limit hit.
+    Cloud Function triggered by an hourly scheduler to pull messages
+    that haven't been processed due to a rate-limit and re-enqueue them.
 """
 import json
 import base64
@@ -12,6 +12,7 @@ from concurrent.futures import TimeoutError
 from google.cloud import pubsub_v1
 
 subscriber = pubsub_v1.SubscriberClient()
+
 
 def handler(request):
     """

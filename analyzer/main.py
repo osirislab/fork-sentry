@@ -48,16 +48,22 @@ def handler():
     payload = base64.b64decode(data).decode("utf-8")
     payload = json.loads(payload)
 
+    # preemptively check if we hit the rate-limit, we'll return
+    # now and let the exponential backoff retry until we can start again
+    token = payload["Token"]
+    client = github.Github(token)
+    if client.get_rate_limit().core.remaining <= 2:
+        return ("", 500)
+
     parent = payload["Parent"]
     repo = payload["Target"]
-    token = payload["Token"]
     try:
         analysis = RepoAnalysis(parent, repo, token)
         analysis.detect_suspicious()
 
     # rate limit reached, backoff by pushing to seperate queue
     except github.RateLimitExceededException as err:
-        analysis.backoff_queue(payload)
+        # analysis.backoff_queue(payload)
         return ("", 500)
 
     # handle all other runtime errors

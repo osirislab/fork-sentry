@@ -12,6 +12,9 @@ resource "google_pubsub_subscription" "fork_analyzer_sub" {
   // Forks will take time to acknowledge, set deadline to max
   ack_deadline_seconds = 600
 
+  // Forks that fail will be here for a while
+  message_retention_duration = "5400s"
+
   // Make push subscription to the Cloud Run listener endpoint
   push_config {
     push_endpoint = google_cloud_run_service.analyzer.status[0].url
@@ -26,18 +29,18 @@ resource "google_pubsub_subscription" "fork_analyzer_sub" {
     }
   }
 
-  // Drop failed requests in DLQ after 2 failed requests
+  // Retry sending request every 10 minutes
+  retry_policy {
+    minimum_backoff = "600s"
+    maximum_backoff = "600s"
+  }
+
+  // Drop failed requests in DLQ after 10 failed requests
   dead_letter_policy {
     dead_letter_topic     = google_pubsub_topic.fork_analysis_dlq.id
-    max_delivery_attempts = 5
+    max_delivery_attempts = 10
   }
 }
-
-// Retry queue for rate-limited messages
-resource "google_pubsub_topic" "fork_analysis_retry" {
-  name = "fork_analysis_retry"
-}
-
 
 // Dead letter queue for non-retryable messages
 resource "google_pubsub_topic" "fork_analysis_dlq" {
@@ -63,6 +66,9 @@ resource "google_pubsub_subscription" "fork_out_sub" {
 
   ack_deadline_seconds = 20
 
+  // Forks that fail will be here for a while
+  message_retention_duration = "5400s"
+
   // Make push subscription to the HTTP endpoint of function
   push_config {
     push_endpoint = google_cloudfunctions_function.alert.https_trigger_url
@@ -77,12 +83,20 @@ resource "google_pubsub_subscription" "fork_out_sub" {
     }
   }
 
-  // Drop failed requests in DLQ after 2 failed requests
+  // Retry sending request every 10 minutes
+  retry_policy {
+    minimum_backoff = "600s"
+    maximum_backoff = "600s"
+  }
+
+  // Drop failed requests in DLQ after 10 failed requests
   dead_letter_policy {
     dead_letter_topic     = google_pubsub_topic.fork_out_dlq.id
-    max_delivery_attempts = 5
+    max_delivery_attempts = 10
   }
 }
+
+/* ====================  Retry (TODO) - resend messages that failed ==================== */
 
 // Retry queue for rate-limited messages
 resource "google_pubsub_topic" "fork_out_retry" {

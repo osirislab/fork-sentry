@@ -374,5 +374,6 @@ class RepoAnalysis:
         Re-enqueue a repository to a seperate queue if we hit the rate limit. That one will
         push all requests back to this analyzer scheduled in the next hour. (TODO)
         """
-        msg = json.dumps(results, indent=2).encode("utf-8")
-        publisher.publish(topic, alerts)
+        # msg = json.dumps(results, indent=2).encode("utf-8")
+        # publisher.publish(topic, alerts)
+        pass
