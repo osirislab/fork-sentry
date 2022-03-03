@@ -12,8 +12,7 @@ import (
 )
 
 type JobPayload struct {
-	Owner string `json:"owner"`
-	Repo  string `json:"name"`
+	Repo  string `json:"repo"`
 	Token string `json:"github_token"`
 	API   string `json:"api_token"`
 }
@@ -61,7 +60,7 @@ func DispatchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if payload.Owner == "" || payload.Repo == "" {
+	if payload.Repo == "" {
 		log.Fatal("Repository payload incomplete")
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
@@ -79,8 +78,7 @@ func DispatchHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 
 	go func() {
-		repoName := payload.Owner + "/" + payload.Repo
-		log.Printf("Recovering valid forks for repo '%s'", repoName)
+		log.Printf("Recovering valid forks for repo '%s'", payload.Repo)
 
 		ff, err := NewForkFinder(ctx, &payload)
 		if err != nil {
@@ -90,12 +88,12 @@ func DispatchHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		defer ff.Close()
 
-		if err := ff.FindAndDispatch(); err != nil {
+		if err := ff.FindAndDispatch(false); err != nil {
 			log.Fatalf("Excavating and dispatching forks failed: %s", err)
 			http.Error(w, "Bad Request", http.StatusBadRequest)
 			return
 		}
 
-		log.Printf("Finalized dispatching analysis for `%s", repoName)
+		log.Printf("Finalized dispatching analysis for `%s", payload.Repo)
 	}()
 }

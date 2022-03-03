@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"cloud.google.com/go/pubsub"
 	"github.com/google/go-github/v40/github"
@@ -19,7 +20,7 @@ import (
 
 // Describes the payload for an individual target fork that is enqueued to the
 // analyzer for static analysis
-type AnalyzerPayload struct {
+type Fork struct {
 	Parent string
 	Target string
 	Token  string
@@ -63,10 +64,18 @@ func NewForkFinder(ctx context.Context, payload *JobPayload) (*ForkFinder, error
 
 // With an instantiated `ForkFinder`, dispatch our API and fuzzing heuristics asynchronously,
 // caching repository names that are found.
-func (f *ForkFinder) FindAndDispatch() error {
+func (f *ForkFinder) FindAndDispatch(unlinked_typos bool) error {
 	if err := f.RecoverValidForks(); err != nil {
 		return err
 	}
+
+	/*
+		if unlinked_typos {
+			if err := f.FuzzRepo(); err != nil {
+				return err
+			}
+		}
+	*/
 	return nil
 }
 
@@ -110,61 +119,77 @@ func (f *ForkFinder) RecoverValidForks() error {
 		},
 	}
 
-	owner := f.Inputs.Owner
-	origName := f.Inputs.Repo
+	// stores all the parent repos we have yet visited
+	visited := []string{f.Inputs.Repo}
 
 	// do a depth-first search, and traverse each fork for further children that should also be enqueued
 	log.Println("Iterating and sanity checking recovered forks")
 	for {
-		forks, res, err := f.Client.Repositories.ListForks(f.Ctx, owner, origName, &opts)
-		if err != nil {
-			return err
-		}
 
-		for _, fork := range forks {
-			name := fork.GetFullName()
-
-			// sanity check fork for existence
-			if fork.GetPrivate() {
-				log.Printf("Skipping %s, is a private repo", name)
-				continue
-			}
-
-			ok, err := DirtyExistenceCheck(name)
-			if err != nil {
-				return err
-			}
-			if !ok {
-				log.Printf("Skipping %s, may be private or deleted", name)
-				continue
-			}
-
-			// traverse further if there are subforks
-			count := fork.GetForksCount()
-			if count != 0 {
-				// TODO
-			}
-
-			sendPayload := AnalyzerPayload{
-				Parent: owner + "/" + origName,
-				Target: name,
-				Token:  f.Inputs.Token,
-			}
-
-			payload, err := json.Marshal(sendPayload)
-			if err != nil {
-				return err
-			}
-
-			log.Printf("Publishing fork `%s` for analysis", name)
-			_ = f.PubsubTopic.Publish(f.Ctx, &pubsub.Message{
-				Data: payload,
-			})
-		}
-		if res.NextPage == 0 {
+		// stop enqueing once we're all done
+		if len(visited) == 0 {
 			break
 		}
-		opts.Page = res.NextPage
+
+		// pop from visited and get owner and name
+		repoName, visited := Pop(visited)
+		repo := strings.Split(repoName, "/")
+
+		// enumerate forks while dealing with pagination
+		for {
+			forks, res, err := f.Client.Repositories.ListForks(f.Ctx, repo[0], repo[1], &opts)
+			if err != nil {
+				return err
+			}
+
+			for _, fork := range forks {
+				name := fork.GetFullName()
+
+				// sanity check fork for existence
+				if fork.GetPrivate() {
+					log.Printf("Skipping %s, is a private repo", name)
+					continue
+				}
+
+				// it appears sometimes the repo is actually private or recently deleted,
+				// do a second check to validate that is actually the case
+				ok, err := DirtyExistenceCheck(name)
+				if err != nil {
+					return err
+				}
+				if !ok {
+					log.Printf("Skipping %s, may be private or deleted", name)
+					continue
+				}
+
+				// traverse further if there are subforks
+				count := fork.GetForksCount()
+				if count != 0 {
+					visited = append(visited, *fork.FullName)
+				}
+
+				fork := Fork{
+					Parent: repoName,
+					Target: name,
+					Token:  f.Inputs.Token,
+				}
+
+				payload, err := json.Marshal(fork)
+				if err != nil {
+					return err
+				}
+
+				log.Printf("Publishing fork `%s` for analysis", name)
+				_ = f.PubsubTopic.Publish(f.Ctx, &pubsub.Message{
+					Data: payload,
+				})
+			}
+			if res.NextPage == 0 {
+				break
+			}
+			opts.Page = res.NextPage
+		}
+
 	}
 	return nil
 }

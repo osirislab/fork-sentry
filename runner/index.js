@@ -16,6 +16,7 @@ try {
 
   // Get the JSON webhook payload for the event that triggered the workflow
   const {owner, name} = github.context.repo();
+  const repo_name = owner + "/" + name;
 
   // send request to dispatcher to kick off analysis
   const time = (new Date()).toTimeString();
@@ -23,8 +24,7 @@ try {
 
   const data = new TextEncoder().encode(
     JSON.stringify({
-        owner: owner,
-        name: name,
+        repo: repo_name,
         github_token: github_token,
         api_token: fork_sentry_token,
     })

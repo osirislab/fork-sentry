@@ -12,6 +12,10 @@ import (
 	"cloud.google.com/go/pubsub"
 )
 
+func Pop(a []string) (string, []string) {
+	return a[len(a)-1], a[:len(a)-1]
+}
+
 // Helper that sends a request to the GitHub repository page to check if the
 // repository exists or has recently become private.
 func DirtyExistenceCheck(repoName string) (bool, error) {
