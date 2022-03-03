@@ -10,6 +10,9 @@ variable "project_name" {
 variable "project_id" {
 }
 
+variable "project_num" {
+}
+
 variable "region" {
 }
 
@@ -22,8 +25,5 @@ variable "root_api_token" {
 variable "analyzer_sentry_dsn" {
 }
 
-variable "dispatcher_image" {
-}
-
-variable "analyzer_image" {
+variable "repo_name" {
 }

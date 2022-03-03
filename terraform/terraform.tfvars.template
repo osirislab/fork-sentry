@@ -1,14 +1,15 @@
 /* ========== GCP Variables ========== */
 
-google_application_credentials = "./gcp-credentials.json"
+google_application_credentials = "./private/gcp-credentials.json"
 service_account_id             = ""
 
 project_name = ""
 project_id   = ""
+project_num  = ""
 region       = ""
 zone         = ""
 
-/* ========== SERVICE IMAGES ========== */
+repo_name    = "builds"
 
-dispatcher_image  = ""
-analyzer_image    = ""
+root_api_token      = ""
+analyzer_sentry_dsn = ""

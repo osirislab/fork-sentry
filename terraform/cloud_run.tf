@@ -7,7 +7,7 @@ resource "google_cloud_run_service" "dispatcher" {
   template {
     spec {
       containers {
-        image = var.dispatcher_image
+        image = "${var.region}-docker.pkg.dev/${var.project_name}/${var.repo_name}/dispatcher:latest"
 
         resources {
           limits = {
@@ -50,7 +50,7 @@ resource "google_cloud_run_service" "analyzer" {
   template {
     spec {
       containers {
-        image = var.analyzer_image
+        image = "${var.region}-docker.pkg.dev/${var.project_name}/${var.repo_name}/analyzer:latest"
 
         resources {
           limits = {

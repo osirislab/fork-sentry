@@ -15,10 +15,12 @@ provider "google" {
   credentials = var.google_application_credentials
 }
 
-// Imported manually
-resource "google_project" "project" {
-  name       = var.project_name
-  project_id = var.project_name
+provider "google-beta" {
+  project = var.project_name
+  region  = var.region
+  zone    = var.zone
+
+  credentials = file(var.google_application_credentials)
 }
 
 // Imported manually from the root service account we're using as credentials

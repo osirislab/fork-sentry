@@ -1,8 +1,6 @@
+private/
+
 .terraform
 .terraform.lock.hcl
-
 *.tfstate*
-*.key
-
 terraform.tfvars
-gcp-credentials.json
