@@ -74,6 +74,8 @@ func DispatchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// TODO: check to see if analysis can be dispatched again
+
 	log.Println("Initial payload is good, responding and continuing with task")
 	w.WriteHeader(http.StatusAccepted)
 

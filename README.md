@@ -42,6 +42,12 @@ jobs:
           vt_token: ${{ secrets.VT_API_TOKEN }}
 ```
 
+### Restrictions
+
+* Users must have a valid API token to trigger dispatch an analysis
+* Analysis jobs can only be run at a minimum of every 6 hours
+* Rate limiting against the dispatching endpoint will still be imposed to block large volumes of requests
+
 ## Architecture
 
 ![infrastructure](infrastructure.png)
