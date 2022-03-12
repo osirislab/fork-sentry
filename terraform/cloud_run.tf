@@ -54,8 +54,8 @@ resource "google_cloud_run_service" "analyzer" {
 
         resources {
           limits = {
-            cpu    = 2
-            memory = "1024M"
+            cpu    = 4
+            memory = "4000M"
           }
         }
 

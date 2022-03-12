@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/didip/tollbooth/v6"
 	"github.com/joho/godotenv"
 )
 
@@ -27,12 +28,11 @@ func init() {
 }
 
 func main() {
-	log.Print("Starting server...")
-	http.HandleFunc("/dispatch", DispatchHandler)
-	http.HandleFunc("/health", HealthHandler)
+	lmt := tollbooth.NewLimiter(1, nil)
 
-	// Start HTTP server.
-	log.Printf("Listening on port 8080")
+	log.Print("Starting server on port 8080...")
+	http.Handle("/dispatch", tollbooth.LimitFuncHandler(lmt, DispatchHandler))
+	http.HandleFunc("/health", HealthHandler)
 	if err := http.ListenAndServe(":8080", nil); err != nil {
 		log.Fatal(err)
 	}
@@ -98,4 +98,8 @@ func DispatchHandler(w http.ResponseWriter, r *http.Request) {
 
 		log.Printf("Finalized dispatching analysis for `%s", payload.Repo)
 	}()
+}
+
+func CheckApiToken(token string) (bool, error) {
+	return true, nil
 }

@@ -66,4 +66,4 @@ def _handler(request):
     for path, indicators in payload["suspicious"].items():
         pass
 
-    repo.create_issue(title=title, body=body)
+    #repo.create_issue(title=title, body=body)

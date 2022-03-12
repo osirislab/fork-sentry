@@ -6,7 +6,7 @@ locals {
     "artifactregistry.googleapis.com",
     "iam.googleapis.com",
     "run.googleapis.com",
-    "scheduler.googleapis.com",
+    "cloudscheduler.googleapis.com",
     "secretmanager.googleapis.com",
     "sourcerepo.googleapis.com",
     "pubsub.googleapis.com"
