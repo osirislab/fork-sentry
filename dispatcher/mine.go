@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"cloud.google.com/go/pubsub"
-	"github.com/google/go-github/v40/github"
+	"github.com/google/go-github/v43/github"
 	"golang.org/x/oauth2"
 
 	"github.com/scylladb/go-set/strset"
@@ -42,6 +42,15 @@ func NewForkFinder(ctx context.Context, payload *JobPayload) (*ForkFinder, error
 	tc := oauth2.NewClient(ctx, ts)
 	client := github.NewClient(tc)
 
+	log.Printf("Checking if user can write to target repo from API token")
+	canWrite, err := CheckRepoOwner(ctx, client, payload.Repo)
+	if err != nil {
+		return nil, err
+	}
+	if !canWrite {
+		return nil, fmt.Errorf("ForkFinder: user cannot write to target repository")
+	}
+
 	projectID := os.Getenv("GOOGLE_PROJECT_ID")
 	topicID := os.Getenv("ANALYSIS_QUEUE")
 
@@ -60,6 +69,31 @@ func NewForkFinder(ctx context.Context, payload *JobPayload) (*ForkFinder, error
 		Client:      client,
 		Cache:       strset.New(),
 	}, nil
+}
+
+// Helper to make sure that user can actually write to the target repository
+func CheckRepoOwner(ctx context.Context, client *github.Client, repoName string) (bool, error) {
+	// get current user from the token
+	user, _, err := client.Users.Get(ctx, "")
+	if err != nil {
+		return false, err
+	}
+	currentUser := user.GetLogin()
+
+	// get all collaborators of the repository
+	repo := strings.Split(repoName, "/")
+	opt := github.ListCollaboratorsOptions{}
+	collabs, _, err := client.Repositories.ListCollaborators(ctx, repo[0], repo[1], &opt)
+	if err != nil {
+		return false, err
+	}
+
+	for _, collaborator := range collabs {
+		if collaborator.GetLogin() == currentUser {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // With an instantiated `ForkFinder`, dispatch our API and fuzzing heuristics asynchronously,
