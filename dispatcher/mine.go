@@ -4,14 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"cloud.google.com/go/pubsub"
 	"github.com/google/go-github/v43/github"
 	"golang.org/x/oauth2"
 
+	"github.com/rs/zerolog/log"
 	"github.com/scylladb/go-set/strset"
 	//"zntr.io/typogenerator"
 	//"zntr.io/typogenerator/mapping"
@@ -31,18 +33,19 @@ type ForkFinder struct {
 	Inputs      *JobPayload
 	Client      *github.Client
 	PubsubTopic *pubsub.Topic
+	Forks       []*Fork
 	Cache       *strset.Set
 }
 
 func NewForkFinder(ctx context.Context, payload *JobPayload) (*ForkFinder, error) {
-	log.Println("Creating authenticated GitHub client")
+	log.Debug().Msg("Creating authenticated GitHub client")
 	ts := oauth2.StaticTokenSource(
 		&oauth2.Token{AccessToken: payload.Token},
 	)
 	tc := oauth2.NewClient(ctx, ts)
 	client := github.NewClient(tc)
 
-	log.Printf("Checking if user can write to target repo from API token")
+	log.Info().Msg("Checking if user can write to target repo from API token")
 	canWrite, err := CheckRepoOwner(ctx, client, payload.Repo)
 	if err != nil {
 		return nil, err
@@ -52,9 +55,16 @@ func NewForkFinder(ctx context.Context, payload *JobPayload) (*ForkFinder, error
 	}
 
 	projectID := os.Getenv("GOOGLE_PROJECT_ID")
-	topicID := os.Getenv("ANALYSIS_QUEUE")
+	if projectID == "" {
+		return nil, fmt.Errorf("GOOGLE_PROJECT_ID path not specified as envvar")
+	}
 
-	log.Printf("Creating pubsub client and getting topic '%s'", topicID)
+	topicID := os.Getenv("ANALYSIS_QUEUE")
+	if topicID == "" {
+		return nil, fmt.Errorf("ANALYSIS_QUEUE topic envvar not specified as envvar")
+	}
+
+	log.Debug().Msgf("Creating pubsub client and getting topic '%s'", topicID)
 	pubsubClient, err := pubsub.NewClient(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("pubsub.NewClient: %v", err)
@@ -67,6 +77,7 @@ func NewForkFinder(ctx context.Context, payload *JobPayload) (*ForkFinder, error
 		Inputs:      payload,
 		PubsubTopic: topic,
 		Client:      client,
+		Forks:       []*Fork{},
 		Cache:       strset.New(),
 	}, nil
 }
@@ -79,6 +90,7 @@ func CheckRepoOwner(ctx context.Context, client *github.Client, repoName string)
 		return false, err
 	}
 	currentUser := user.GetLogin()
+	log.Debug().Msgf("Current GitHub user: %s", currentUser)
 
 	// get all collaborators of the repository
 	repo := strings.Split(repoName, "/")
@@ -88,8 +100,10 @@ func CheckRepoOwner(ctx context.Context, client *github.Client, repoName string)
 		return false, err
 	}
 
+	log.Info().Msgf("Getting collaborators for %s", repoName)
 	for _, collaborator := range collabs {
 		if collaborator.GetLogin() == currentUser {
+			log.Debug().Msg("API token can write to repo, progressing")
 			return true, nil
 		}
 	}
@@ -99,6 +113,7 @@ func CheckRepoOwner(ctx context.Context, client *github.Client, repoName string)
 // With an instantiated `ForkFinder`, dispatch our API and fuzzing heuristics asynchronously,
 // caching repository names that are found.
 func (f *ForkFinder) FindAndDispatch(unlinked_typos bool) error {
+	log.Info().Msgf("Recovering valid forks for repository %s", f.Inputs.Repo)
 	if err := f.RecoverValidForks(); err != nil {
 		return err
 	}
@@ -110,6 +125,40 @@ func (f *ForkFinder) FindAndDispatch(unlinked_typos bool) error {
 			}
 		}
 	*/
+
+	var wg sync.WaitGroup
+	var totalErrors uint64
+
+	log.Info().Msgf("Publishing %d forks for analysis", len(f.Forks))
+	for _, fork := range f.Forks {
+		payload, err := json.Marshal(*fork)
+		if err != nil {
+			return err
+		}
+
+		result := f.PubsubTopic.Publish(f.Ctx, &pubsub.Message{
+			Data: payload,
+		})
+		wg.Add(1)
+
+		// The Get method blocks until a server-generated ID or
+		// an error is returned for the published message.
+		go func(res *pubsub.PublishResult) {
+			defer wg.Done()
+			id, err := res.Get(f.Ctx)
+			if err != nil {
+				log.Error().Msgf("Failed to publish: %v", err)
+				atomic.AddUint64(&totalErrors, 1)
+				return
+			}
+			log.Info().Msgf("Published msg with ID: %v", id)
+		}(result)
+	}
+	wg.Wait()
+
+	if totalErrors > 0 {
+		return fmt.Errorf("%d of %d messages did not publish successfully", totalErrors, len(f.Forks))
+	}
 	return nil
 }
 
@@ -144,8 +193,6 @@ func (f *ForkFinder) FuzzRepo() error {
 // Given a repository name, create an authenticated client and recover
 // all valid forks, including all subforks for that repo.
 func (f *ForkFinder) RecoverValidForks() error {
-	log.Println("Listing forks for repository")
-
 	opts := github.RepositoryListForksOptions{
 		Sort: "newest",
 		ListOptions: github.ListOptions{
@@ -157,16 +204,17 @@ func (f *ForkFinder) RecoverValidForks() error {
 	visited := []string{f.Inputs.Repo}
 
 	// do a depth-first search, and traverse each fork for further children that should also be enqueued
-	log.Println("Iterating and sanity checking recovered forks")
+	log.Info().Msg("Iterating and sanity checking recovered forks")
 	for {
 
 		// stop enqueing once we're all done
 		if len(visited) == 0 {
 			break
 		}
+		log.Debug().Msgf("%d left to visit", len(visited))
 
 		// pop from visited and get owner and name
-		repoName, visited := Pop(visited)
+		repoName := Pop(&visited)
 		repo := strings.Split(repoName, "/")
 
 		// enumerate forks while dealing with pagination
@@ -180,6 +228,7 @@ func (f *ForkFinder) RecoverValidForks() error {
 				name := fork.GetFullName()
 
 				// sanity check fork for existence
+				log.Debug().Msgf("%s - checking if private repository", name)
 				if fork.GetPrivate() {
 					log.Printf("Skipping %s, is a private repo", name)
 					continue
@@ -187,43 +236,37 @@ func (f *ForkFinder) RecoverValidForks() error {
 
 				// it appears sometimes the repo is actually private or recently deleted,
 				// do a second check to validate that is actually the case
+				log.Debug().Msgf("%s - second existence check", name)
 				ok, err := DirtyExistenceCheck(name)
 				if err != nil {
 					return err
 				}
 				if !ok {
-					log.Printf("Skipping %s, may be private or deleted", name)
+					log.Debug().Msgf("%s - skipping may be private or deleted", name)
 					continue
 				}
 
 				// traverse further if there are subforks
 				count := fork.GetForksCount()
 				if count != 0 {
+					log.Debug().Msgf("%s - contains %d children forks to traverse", name, count)
 					visited = append(visited, *fork.FullName)
 				}
 
+				log.Info().Msgf("%s - good to publish", name)
 				fork := Fork{
 					Parent: repoName,
 					Target: name,
 					Token:  f.Inputs.Token,
 				}
 
-				payload, err := json.Marshal(fork)
-				if err != nil {
-					return err
-				}
-
-				log.Printf("Publishing fork `%s` for analysis", name)
-				_ = f.PubsubTopic.Publish(f.Ctx, &pubsub.Message{
-					Data: payload,
-				})
+				f.Forks = append(f.Forks, &fork)
 			}
 			if res.NextPage == 0 {
 				break
 			}
 			opts.Page = res.NextPage
 		}
-
 	}
 	return nil
 }

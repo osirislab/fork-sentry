@@ -91,7 +91,7 @@ class RepoAnalysis:
         if vt_token:
             self.vt_client = vt.Client(vt_token)
 
-    def _analyze_artifact(self, path) -> t.Optional[str]:
+    def _analyze_artifact(self, path) -> t.Optional[t.Dict[str, str]]:
         """
         Heuristics to check if a modified file is suspicious and should be enqueued for further analysis.
         """
@@ -139,18 +139,21 @@ class RepoAnalysis:
         # threat detection time
         for target in targets:
 
+            """
             with open(target, "rb") as fd:
                 contents = fd.read()
                 iobuf = io.BytesIO(contents)
+            """
 
             # trigger ClamAV scan first
-            results = scanner.instream(iobuf)
+            results = scanner.scan(target)
             for path, tags in results.items():
                 found, name = tags[0], tags[1]
                 if found == "FOUND":
                     iocs += [f"clamav:{name}"]
 
             # trigger scan with VTotal if API key is supplied
+            # TODO: handle rate limit exception
             if self.vt_client:
                 analysis = self.vt_client.scan_file(contents, wait_for_completion=True)
                 vtotal_mal = analysis.last_analysis_stats["malicious"]
@@ -193,15 +196,17 @@ class RepoAnalysis:
             "token": self.token,
             # actually malicious indicators
             # - typosquatting: edit distance of repo name is suspiciously small
-            # - suspicious: all artifacts that have some IOCs
+            # - commited: commmited files that is malicious
+            # - releases: artifact in fork's release is malicious
             "typosquatting": False,
-            "suspicious": {},
-            # all changes in-tree and releases, regardless of whether or not they are malicious
-            "file_deltas": [],
-            "releases": {},
+            "sus_committed": [],
+            "sus_releases": [],
+            # auxiliary: store all deltas for logging/records
+            "committed": [],
+            "releases": [],
         }
 
-        logger.info(f"{self.repo_name}: checking for typosquatting")
+        logger.info(f"{self.repo_name} - checking for typosquatting")
         distance = RepoAnalysis._levenshtein_distance(
             self.fork_owner, self.parent.owner.login
         )
@@ -210,7 +215,7 @@ class RepoAnalysis:
 
         # find commits by the fork owner and/or user known as a contributor, and
         # detect if any of the changes are new artifacts we need to analyze
-        logger.info(f"{self.repo_name}: checking for suspicious commits")
+        logger.info(f"{self.repo_name} - checking for suspicious commits")
 
         # clone repository to temporary path with random ID to prevent concurrent containers
         # from cloning to the same spot
@@ -267,8 +272,8 @@ class RepoAnalysis:
                     artifact = f"{path}/{diff.a_path}"
 
                     logger.debug(f"Analyzing `{artifact}` for suspicious indicators")
-                    artifact_res = self._analyze_artifact(artifact)
-                    if artifact_res:
+                    detected = self._analyze_artifact(artifact)
+                    if detected:
 
                         # create object name to store in infected bucket
                         base = diff.a_path.split("/")[-1]
@@ -277,11 +282,12 @@ class RepoAnalysis:
                         )
                         self._push_to_storage(artifact, object_name)
 
-                        # filter out those with interesting results
-                        results["suspicious"][diff.a_path] = artifact_res
+                        # add to final report
+                        detected["path"] = diff.a_path
+                        results["sus_committed"] += [detected]
 
-                    # record all files changed
-                    results["file_deltas"] += [diff.a_path]
+                    # record all changes regardless
+                    results["committed"] += [diff.a_path]
 
         shutil.rmtree(path)
 
@@ -289,12 +295,17 @@ class RepoAnalysis:
         logger.info(f"{self.repo_name} - checking for suspicious releases")
         for release in self.repo.get_releases():
             tag = release.tag_name
-
-            results["releases"][tag] = []
             for asset in release.get_assets():
 
                 filename = asset.name
                 url = asset.browser_download_url
+                logger.debug(f"{filename}: {url}")
+
+                metadata = {
+                    "path": filename,
+                    "url": url,
+                    "tag": tag,
+                }
 
                 # download file to disk
                 resp = requests.get(url)
@@ -304,8 +315,8 @@ class RepoAnalysis:
                             f.write(chunk)
 
                 logger.debug(f"Analyzing `{artifact}` for suspicious indicators")
-                artifact_res = self._analyze_artifact(filename)
-                if artifact_res:
+                detected = self._analyze_artifact(filename)
+                if detected:
 
                     # create object name to store in infected bucket
                     object_name = (
@@ -313,18 +324,13 @@ class RepoAnalysis:
                     )
                     self._push_to_storage(artifact, object_name)
 
-                    # filter out those with interesting results
-                    results["suspicious"][filename] = artifact_res
+                    # add to final report
+                    detected.update(metadata)
+                    results["sus_releases"] += [detected]
 
+                # record all changes regardless
+                results["releases"] += [metadata]
                 os.remove(filename)
-
-                results["releases"][tag] += [
-                    {
-                        "name": filename,
-                        "url": url,
-                    }
-                ]
-                logger.debug(f"{asset.name}: {asset.browser_download_url}")
 
         self._generate_alerts(results)
 
@@ -358,16 +364,15 @@ class RepoAnalysis:
         """
         if (
             not results["typosquatting"]
-            and len(results["suspicious"]) == 0
-            and len(results["releases"]) == 0
-            and len(results["file_deltas"]) == 0
+            and len(results["sus_releases"]) == 0
+            and len(results["sus_committed"]) == 0
         ):
             logger.info(f"Nothing found for fork {self.repo_name}")
             return
 
-        logger.info(f"Outputting alerts for `{self.repo_name}`")
-        alerts = json.dumps(results, indent=2).encode("utf-8")
-        publisher.publish(topic, alerts)
+        logger.info(f"Outputting alerts for `{self.repo_name}`: {results}")
+        alerts = json.dumps(results).encode("utf-8")
+        publisher.publish(topic, data=alerts)
 
     def backoff_queue(self) -> None:
         """

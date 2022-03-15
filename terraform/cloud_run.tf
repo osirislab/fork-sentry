@@ -16,7 +16,6 @@ resource "google_cloud_run_service" "dispatcher" {
           }
         }
 
-        // Cloud Resources
         env {
           name  = "GOOGLE_PROJECT_ID"
           value = var.project_name
@@ -28,6 +27,10 @@ resource "google_cloud_run_service" "dispatcher" {
         env {
           name  = "ROOT_API_TOKEN"
           value = var.root_api_token
+        }
+        env {
+          name  = "DATABASE_URL"
+          value = var.db_url
         }
       }
     }
@@ -59,7 +62,6 @@ resource "google_cloud_run_service" "analyzer" {
           }
         }
 
-        // Cloud Resources
         env {
           name  = "GOOGLE_PROJECT_ID"
           value = var.project_name
@@ -71,6 +73,10 @@ resource "google_cloud_run_service" "analyzer" {
         env {
           name  = "SENTRY_DSN"
           value = var.analyzer_sentry_dsn
+        }
+        env {
+          name  = "DATABASE_URL"
+          value = var.db_url
         }
       }
     }

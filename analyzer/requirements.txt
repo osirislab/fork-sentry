@@ -13,7 +13,8 @@ requests
 gunicorn
 sqlalchemy
 sentry-sdk[flask]
-python-dotenv
+python-dotenv==0.19.2
+psycopg2-binary==2.9.3
 
 # analysis
 lief

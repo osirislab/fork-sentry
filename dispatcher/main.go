@@ -99,26 +99,26 @@ func DispatchHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Info().Msg("Initial payload is good, responding and continuing with task")
-	w.WriteHeader(http.StatusAccepted)
-
 	ff, err := NewForkFinder(ctx, &payload)
 	if err != nil {
 		log.Error().Msgf("Instantiating ForkFinder failed: %s", err)
 		http.Error(w, "Bad Request: cannot mine for forks.", http.StatusBadRequest)
 		return
 	}
-	defer ff.Close()
 
+	// We can run this in the background now
+	w.WriteHeader(http.StatusAccepted)
 	go func() {
 		log.Info().Msgf("Recovering valid forks for repo '%s'", payload.Repo)
 
 		if err := ff.FindAndDispatch(false); err != nil {
 			log.Error().Msgf("Excavating and dispatching forks failed: %s", err)
-			http.Error(w, "Bad Request: cannot mine for forks.", http.StatusBadRequest)
+			//http.Error(w, "Bad Request: cannot mine for forks.", http.StatusBadRequest)
 			return
 		}
 
-		log.Info().Msgf("Finalized dispatching analysis for `%s", payload.Repo)
+		log.Info().Msgf("Finalized dispatching analysis for `%s`", payload.Repo)
+		ff.Close()
 	}()
 }
 

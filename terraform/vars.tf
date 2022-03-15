@@ -25,5 +25,8 @@ variable "root_api_token" {
 variable "analyzer_sentry_dsn" {
 }
 
+variable "db_url" {
+}
+
 variable "repo_name" {
 }

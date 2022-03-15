@@ -13,3 +13,4 @@ repo_name    = "builds"
 
 root_api_token      = ""
 analyzer_sentry_dsn = ""
+db_url              = ""
