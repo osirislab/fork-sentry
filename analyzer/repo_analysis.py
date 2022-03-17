@@ -31,7 +31,7 @@ from google.cloud import logging as cloudlogging
 from consts import IGNORE_SOURCE_EXTS, ARCHIVE_MIME
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 # setup publisher to output queue
 publisher = pubsub_v1.PublisherClient()
@@ -50,8 +50,18 @@ logger.addHandler(_handler)
 db_url = os.getenv("DATABASE_URL")
 engine = create_engine(db_url, echo=True, future=True)
 
-# static analysis scanner
-scanner = clamd.ClamdUnixSocket()
+# malware signature scan
+try:
+    scanner = clamd.ClamdUnixSocket()
+    scanner.ping()
+except clamd.ConnectionError:
+    logger.info("Attempting to connect to ClamAV through network socket")
+    scanner = clamd.ClamdNetworkSocket()
+    try:
+        scanner.ping()
+    except clamd.ConnectionError:
+        logger.info("Cannot get bindings to ClamAV")
+        scanner = None
 
 
 class RepoAnalysis:
@@ -119,8 +129,8 @@ class RepoAnalysis:
 
             # do binary similarity analysis with samples we've seen
             results = self._detect_sims(path)
-            if not results is None:
-                return results
+            # if not results is None:
+            #   return results
 
         # file is some compressed archive
         elif mimetypes.guess_type(path)[0] in ARCHIVE_MIME:
@@ -146,27 +156,41 @@ class RepoAnalysis:
             """
 
             # trigger ClamAV scan first
-            results = scanner.scan(target)
-            for path, tags in results.items():
-                found, name = tags[0], tags[1]
-                if found == "FOUND":
-                    iocs += [f"clamav:{name}"]
+            if scanner:
+                target = os.path.abspath(target)
+                logger.debug(
+                    f"{self.repo_name} - Scanning {target} with ClamAV {scanner.version()}"
+                )
+
+                try:
+                    results = scanner.scan(target)
+                    for path, tags in results.items():
+                        found, name = tags[0], tags[1]
+                        if found == "FOUND":
+                            iocs += [f"clamav:{name}"]
+                
+                # TODO: report failure for sample
+                except Exception as err:
+                    logger.error(f"{self.repo_name} - ClamAV exception: {err}")
 
             # trigger scan with VTotal if API key is supplied
             # TODO: handle rate limit exception
             if self.vt_client:
+                logger.debug(f"Scanning {target} with VirusTotal client")
                 analysis = self.vt_client.scan_file(contents, wait_for_completion=True)
                 vtotal_mal = analysis.last_analysis_stats["malicious"]
                 iocs += [f"virustotal:{vtotal_mal}"]
 
         # diffed file is not suspicious
         if len(iocs) == 0:
+            logger.debug(f"{self.repo_name} - Nothing suspicious for {path}")
             return None
 
         # otherwise return hashes and indicators
         with open(path, "rb") as fd:
             contents = fd.read()
 
+        logger.debug(f"{self.repo_name} - Malicious IOCs discovered for {path}: {iocs}")
         return {
             "sha256": hashlib.sha256(contents).hexdigest(),
             "iocs": iocs,
@@ -187,8 +211,6 @@ class RepoAnalysis:
         """
         Analyze an individual fork repository and detect suspicious artifacts and releases.
         """
-
-        logger.debug(f"Analyzing {self.repo_name}")
         results = {
             # metadata needed for further processing
             "parent": self.orig_name,
@@ -211,6 +233,7 @@ class RepoAnalysis:
             self.fork_owner, self.parent.owner.login
         )
         if distance <= 5:
+            logger.debug(f"{self.repo_name} - Typosquatting in repository name found")
             results["typosquatting"] = True
 
         # find commits by the fork owner and/or user known as a contributor, and
@@ -219,22 +242,24 @@ class RepoAnalysis:
 
         # clone repository to temporary path with random ID to prevent concurrent containers
         # from cloning to the same spot
-        path = self.repo.name + "-" + self.uuid
+        path = self.fork_owner + "-" + self.repo.name + "-" + self.uuid
         if os.path.exists(path):
-            logger.debug("Removing previous instance of repository on disk")
+            logger.debug(
+                f"{self.repo_name} - Removing previous instance of repository on disk"
+            )
             shutil.rmtree(path)
 
-        logger.debug(f"Cloning the repository to {path}")
+        logger.debug(f"{self.repo_name} - Cloning the repository to {path}")
         fork_repo = git.Repo.clone_from(self.repo.clone_url, path)
 
-        logger.debug("Recovering remote origins")
+        logger.debug(f"{self.repo_name} - Recovering remote origins")
         origin = fork_repo.remotes.origin
         remotes = origin.pull()
 
         # add and sync with parent repo
         # git remote add upstream PARENT
         # git fetch upstream
-        logger.debug("Setting and fetching upstream remote")
+        logger.debug(f"{self.repo_name} - Setting and fetching upstream remote")
         remote = fork_repo.create_remote("upstream", self.parent.clone_url)
         remote.fetch()
 
@@ -243,7 +268,7 @@ class RepoAnalysis:
         for remote in remotes:
 
             # checkout branch in the current repo
-            logger.debug(f"Analyzing branch {remote}")
+            logger.debug(f"{self.repo_name} - Analyzing branch {remote}")
             fork_repo.git.checkout(remote)
 
             # check if branch exists for upstream remote, otherwise compare
@@ -256,7 +281,9 @@ class RepoAnalysis:
 
             # get number of commits the fork is ahead by
             # git rev-list --left-right --count origin/master...upstream/master
-            logger.debug(f"Checking for changes to analyze in {remote}")
+            logger.debug(
+                f"{self.repo_name} - Checking for changes to analyze in {remote}"
+            )
             count = fork_repo.git.rev_list(
                 "--left-right",
                 "--count",
@@ -271,7 +298,9 @@ class RepoAnalysis:
                 for diff in head.diff(f"HEAD~{ahead}").iter_change_type("D"):
                     artifact = f"{path}/{diff.a_path}"
 
-                    logger.debug(f"Analyzing `{artifact}` for suspicious indicators")
+                    logger.debug(
+                        f"{self.repo_name} - Analyzing `{artifact}` for suspicious indicators"
+                    )
                     detected = self._analyze_artifact(artifact)
                     if detected:
 
@@ -299,7 +328,7 @@ class RepoAnalysis:
 
                 filename = asset.name
                 url = asset.browser_download_url
-                logger.debug(f"{filename}: {url}")
+                logger.debug(f"{self.repo_name} - Found asset {filename} at {url}")
 
                 metadata = {
                     "path": filename,
@@ -314,7 +343,9 @@ class RepoAnalysis:
                         if chunk:
                             f.write(chunk)
 
-                logger.debug(f"Analyzing `{artifact}` for suspicious indicators")
+                logger.debug(
+                    f"{self.repo_name} - Analyzing `{artifact}` for suspicious indicators"
+                )
                 detected = self._analyze_artifact(filename)
                 if detected:
 
@@ -354,7 +385,9 @@ class RepoAnalysis:
         """
         Helper to push artifacts to storage for cold storage and view by maintainers.
         """
-        logger.info(f"Pushing potentially malicious artifact to `{dest}`")
+        logger.info(
+            f"{self.repo_name} - Pushing potentially malicious artifact to `{dest}`"
+        )
         blob = bucket.blob(dest)
         blob.upload_from_filename(path)
 
@@ -367,10 +400,12 @@ class RepoAnalysis:
             and len(results["sus_releases"]) == 0
             and len(results["sus_committed"]) == 0
         ):
-            logger.info(f"Nothing found for fork {self.repo_name}")
+            logger.info(
+                f"{self.repo_name} - Nothing suspicious found, not publishing anymore"
+            )
             return
 
-        logger.info(f"Outputting alerts for `{self.repo_name}`: {results}")
+        logger.info(f"{self.repo_name} - Outputting alerts: {results}")
         alerts = json.dumps(results).encode("utf-8")
         publisher.publish(topic, data=alerts)
 

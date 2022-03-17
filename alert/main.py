@@ -97,7 +97,7 @@ If this is a false positive, you may give this issue a :thumbsdown: so the team 
             headers=["Path", "SHA256", "Malware Indicators"],
             value_matrix=entries,
         )
-        body += writer.write_table()
+        body += writer.dumps()
         body += "\n"
 
     if len(payload["sus_releases"]) != 0:
@@ -115,7 +115,7 @@ If this is a false positive, you may give this issue a :thumbsdown: so the team 
             headers=["Release", "Path", "SHA256", "Malware Indicators"],
             value_matrix=entries,
         )
-        body += writer.write_table()
+        body += writer.dumps()
         body += "\n"
 
     # create new issue label if necessary

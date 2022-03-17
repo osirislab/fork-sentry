@@ -12,11 +12,14 @@ RUN apt-get update && \
     echo "TCPSocket 3310" >> /etc/clamav/clamd.conf && \
     echo "TCPAddr 127.0.0.1" >> /etc/clamav/clamd.conf
 
+RUN wget https://github.com/mandiant/capa/releases/download/v3.2.0/capa-v3.2.0-linux.zip && \
+    unzip capa-v3.2.0-linux.zip 
+
 # Reload services
 RUN service clamav-daemon force-reload
 RUN service clamav-freshclam force-reload
 
-# Install dependencies
+# Install analyzer dependencies
 COPY requirements.txt ./
 RUN pip3 install -r requirements.txt
 
