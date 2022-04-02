@@ -23,6 +23,8 @@ import vt
 import ssdeep
 import requests
 from github import Github
+
+import sqlalchemy as db
 from sqlalchemy import create_engine
 
 from google.cloud import pubsub_v1, storage
@@ -49,6 +51,9 @@ logger.addHandler(_handler)
 # database url
 db_url = os.getenv("DATABASE_URL")
 engine = create_engine(db_url, echo=True, future=True)
+conn = engine.connect()
+metadata = db.MetaData()
+table = db.Table('ssdeep_hashes', metadata, autoload=True, autoload_with=engine)
 
 # malware signature scan
 try:
@@ -101,7 +106,7 @@ class RepoAnalysis:
         if vt_token:
             self.vt_client = vt.Client(vt_token)
 
-    def _analyze_artifact(self, path) -> t.Optional[t.Dict[str, str]]:
+    def _analyze_artifact(self, path: str, release: bool = False) -> t.Optional[t.Dict[str, str]]:
         """
         Heuristics to check if a modified file is suspicious and should be enqueued for further analysis.
         """
@@ -114,72 +119,64 @@ class RepoAnalysis:
         # stores suspicious indicators
         iocs = []
 
-        # stores all files to analyze, if more are extracted
-        targets = []
-
         # binary parser helper
         is_bin = (
             lambda path: lief.is_elf(path) or lief.is_pe(path) or lief.is_macho(path)
         )
 
-        # file is a binary executable/library
-        if is_bin(path):
-            iocs += ["binary"]
-            targets += [path]
+        # do filetype checks if we are checking for changes in the commit tree.
+        # releases naturally will have both binaries and archives, so it's not a suspicious IOC to tag
+        logger.debug(f"{self.repo_name} - determine relevant filetype to tag")
+        if not release:
 
-            # do binary similarity analysis with samples we've seen
-            results = self._detect_sims(path)
-            # if not results is None:
-            #   return results
+            # file is a binary executable/library
+            if is_bin(path):
+                iocs += ["binary"]
 
-        # file is some compressed archive
-        elif mimetypes.guess_type(path)[0] in ARCHIVE_MIME:
-            iocs += ["archive"]
-
-            # extract contents and enqueue all files for scanning
-            unpacked = "unpacked_" + self.uuid
-            shutil.unpack_archive(filename=path, extract_dir=unpacked)
-            for dir, _, name in os.walk(unpacked):
-                targets += os.path.join(dir, name)
+            # file is some compressed archive
+            elif mimetypes.guess_type(path)[0] in ARCHIVE_MIME:
+                iocs += ["archive"]
 
         # file is build script, tag but won't analyze
-        elif path.endswith(".sh") or path.endswith(".bat") or path.endswith(".run"):
+        if path.endswith(".sh") or path.endswith(".bat") or path.endswith(".run"):
             iocs += ["build-script"]
 
-        # threat detection time
-        for target in targets:
+        logger.debug(f"{self.repo_name} - checking for sample existence")
+        shasum = hashlib.sha256(contents).hexdigest()
+        exact = self._detect_exact(shasum)
+        if exact:
+            return exact
 
-            """
-            with open(target, "rb") as fd:
-                contents = fd.read()
-                iobuf = io.BytesIO(contents)
-            """
+        logger.debug(f"{self.repo_name} - running similarity analysis")
+        similars = self._detect_sims(path, shasum)
+        if similars:
+            return similars
 
-            # trigger ClamAV scan first
-            if scanner:
-                target = os.path.abspath(target)
-                logger.debug(
-                    f"{self.repo_name} - Scanning {target} with ClamAV {scanner.version()}"
-                )
+        # trigger ClamAV scan first
+        if scanner:
+            target = os.path.abspath(path)
+            logger.debug(
+                f"{self.repo_name} - Scanning {target} with ClamAV {scanner.version()}"
+            )
 
-                try:
-                    results = scanner.scan(target)
-                    for path, tags in results.items():
-                        found, name = tags[0], tags[1]
-                        if found == "FOUND":
-                            iocs += [f"clamav:{name}"]
-                
-                # TODO: report failure for sample
-                except Exception as err:
-                    logger.error(f"{self.repo_name} - ClamAV exception: {err}")
+            try:
+                results = scanner.scan(target)
+                for path, tags in results.items():
+                    found, name = tags[0], tags[1]
+                    if found == "FOUND":
+                        iocs += [f"clamav:{name}"]
+            
+            # TODO: report failure for sample
+            except Exception as err:
+                logger.info(f"{self.repo_name} - ClamAV exception: {err}")
 
-            # trigger scan with VTotal if API key is supplied
-            # TODO: handle rate limit exception
-            if self.vt_client:
-                logger.debug(f"Scanning {target} with VirusTotal client")
-                analysis = self.vt_client.scan_file(contents, wait_for_completion=True)
-                vtotal_mal = analysis.last_analysis_stats["malicious"]
-                iocs += [f"virustotal:{vtotal_mal}"]
+        # trigger scan with VTotal if API key is supplied
+        # TODO: handle rate limit exception
+        if self.vt_client:
+            logger.debug(f"Scanning {target} with VirusTotal client")
+            analysis = self.vt_client.scan_file(contents, wait_for_completion=True)
+            vtotal_mal = analysis.last_analysis_stats["malicious"]
+            iocs += [f"virustotal:{vtotal_mal}"]
 
         # diffed file is not suspicious
         if len(iocs) == 0:
@@ -192,20 +189,40 @@ class RepoAnalysis:
 
         logger.debug(f"{self.repo_name} - Malicious IOCs discovered for {path}: {iocs}")
         return {
-            "sha256": hashlib.sha256(contents).hexdigest(),
+            "sha256": shasum,
             "iocs": iocs,
+            "similars": similars,
         }
 
-    def _detect_sims(self, path: str):
+    def _detect_exact(self, shasum: str):
+        """
+        Find if an entry 
+        """
+        results = engine.execute(f"SELECT * FROM fork_sentry_samples where shasum = :shasum", shasum=shasum)
+        print(results)
+
+    def _detect_sims(self, path):
         """
         Given a binary, generate a fuzzy hash, and query for matching items against our database.
         """
         with open(path, "rb") as fd:
             fhash = ssdeep.hash(fd.read())
+            sha256 = hashlib.sha256(fd.read()).hexdigest()
 
-        # recover attributes from fuzzy hash
+        fhash = fhash[2:][:-1]
         chunksize, chunk, double_chunk = fhash.split(":")
         chunksize = int(chunksize)
+        query = db.insert(table).values(
+            {
+                "hash_id": chunksize,
+                "hash": fhash,
+                "chunk": chunk,
+                "dchunk": double_chunk,
+                "name": path,
+                "sha256": sha256,
+            }
+        )
+        conn.execute(query)
 
     def detect_suspicious(self):
         """
