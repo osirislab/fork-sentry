@@ -75,11 +75,12 @@ def _handler(request):
 ## Detection Results
 
 If the generated results warrant takedown, please click [here]({REPORT_LINK}) to file a report with GitHub Trust & Safety.
+
 If this is a false positive, you may give this issue a :thumbsdown: so the team can better enhance our detection strategies.
 """
 
     if payload["typosquatting"]:
-        body += "### Repository Typosquatting\n"
+        body += "### Repository Typosquatting :writing_hand:\n"
         body += "The fork's name, `{child}` appears to be __typosquatting__ your repository, creating opportunities to hack victims that misspell your repo's name.\n"
 
     if len(payload["sus_committed"]) != 0:
@@ -90,11 +91,11 @@ If this is a false positive, you may give this issue a :thumbsdown: so the team 
         entries = []
         for entry in payload["sus_committed"]:
             iocs = ", ".join(entry["iocs"])
-            entries += [[entry["path"], entry["sha256"], iocs]]
+            entries += [[entry["path"], iocs, entry["sha256"]]]
 
         # TODO: commit, branch, author, download link from our artifact storage
         writer = MarkdownTableWriter(
-            headers=["Path", "SHA256", "Malware Indicators"],
+            headers=["Path", "Malware Indicators", "SHA256"],
             value_matrix=entries,
         )
         body += writer.dumps()
@@ -109,10 +110,10 @@ If this is a false positive, you may give this issue a :thumbsdown: so the team 
         for entry in payload["sus_releases"]:
             iocs = ", ".join(entry["iocs"])
             tag = f"[{entry['tag']}]({entry['url']})"
-            entries += [[tag, entry["path"], entry["sha256"], iocs]]
+            entries += [[tag, entry["path"], iocs, entry["sha256"]]]
 
         writer = MarkdownTableWriter(
-            headers=["Release", "Path", "SHA256", "Malware Indicators"],
+            headers=["Release", "Path", "Malware Indicators", "SHA256"],
             value_matrix=entries,
         )
         body += writer.dumps()
